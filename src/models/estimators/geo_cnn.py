@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 
+
 class GCNNWR(nn.Module):
     def __init__(self, dim, in_channels=1):
         super(GCNNWR, self).__init__()
