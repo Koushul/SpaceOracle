@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
+from pysal.model.spreg import OLS as ols
+from sklearn import linear_model
 
 class GCNNWR(nn.Module):
-    def __init__(self, dim, in_channels=1):
+    def __init__(self, betas, in_channels=1, init=0.1):
         super(GCNNWR, self).__init__()
-        self.dim = dim
-        init = 0.1
-
+            
+        self.dim = self.betas.shape[0]
+        
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
             nn.PReLU(init),
@@ -38,7 +40,6 @@ class GCNNWR(nn.Module):
             nn.Linear(16, self.dim+1)
         )
 
-        self.beta_ols = torch.ones(self.dim+1).float()
 
     def forward(self, inputs_dis, inputs_x):
         x = self.conv_layers(inputs_dis)
