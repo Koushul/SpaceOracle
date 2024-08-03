@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
-from pysal.model.spreg import OLS as ols
+from pysal.model.spreg import OLS
 from sklearn import linear_model
 from abc import ABC, abstractmethod
 import copy
@@ -30,8 +30,8 @@ class Estimator(ABC):
 class LeastSquaredEstimator(Estimator):
     
     def fit(self, X, y):
-        ols = ols(y=y, x=X)
-        self.betas = ols.betas
+        ols_model = OLS(y=y, x=X)
+        self.betas = ols_model.betas
     
     def get_betas(self):
         return self.betas
@@ -117,7 +117,7 @@ class GeoCNNEstimator(Estimator):
             
         return best_model, losses
         
-    def fit(self, X, y, xy, init_betas='ones', spatial_dim=64, in_channels=1, init=0.1):
+    def fit(self, X, y, xy, init_betas='ols', spatial_dim=64, in_channels=1, init=0.1):
         assert init_betas in ['ones', 'ols']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
         
@@ -129,6 +129,8 @@ class GeoCNNEstimator(Estimator):
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
             beta_init = ols.get_betas().reshape(-1, )
+            
+        print(beta_init)
         
         self._build_cnn(
             X, y,
