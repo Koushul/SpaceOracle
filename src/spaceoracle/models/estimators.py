@@ -1,16 +1,16 @@
+import numpy as np
+from pysal.model.spreg import OLS
+from abc import ABC, abstractmethod
+import copy
+from tqdm import tqdm 
+
 import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
-from pysal.model.spreg import OLS
-from sklearn import linear_model
-from abc import ABC, abstractmethod
-import copy
-import numpy as np
-from tqdm import tqdm 
 from torch.utils.data import DataLoader, TensorDataset, random_split
-from spatial_map import xy2spatial
-from sklearn.model_selection import train_test_split
 from torchvision.transforms import Normalize
+
+from .spatial_map import xy2spatial
 
 
 class Estimator(ABC):
@@ -58,7 +58,7 @@ class GeoCNNEstimator(Estimator):
         split = int((1-test_size)*len(dataset))
         train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
+        valid_dataloader = DataLoader(valid_dataset, batch_size=len(valid_dataset), shuffle=False)
 
         return train_dataloader, valid_dataloader
         
