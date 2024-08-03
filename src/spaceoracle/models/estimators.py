@@ -141,7 +141,7 @@ class GeoCNNEstimator(Estimator):
             ols.fit(X, y)
             beta_init = ols.get_betas().reshape(-1, )
             
-        # print(beta_init)
+        self.beta_init = beta_init
         
         model, losses = self._build_cnn(
             X, y,
