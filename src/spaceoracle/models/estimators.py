@@ -12,6 +12,8 @@ from torchvision.transforms import Normalize
 
 from .spatial_map import xy2spatial
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class Estimator(ABC):
     
@@ -41,20 +43,29 @@ class LeastSquaredEstimator(Estimator):
 class GeoCNNEstimator(Estimator):
     
     
-    def _build_dataloaders(self, X, y, xy, spatial_dim, batch_size=32, test_size=0.2):
+    def _build_dataloaders(self, X, y, xy, spatial_dim, mode='train', batch_size=32, test_size=0.2):
         norm = Normalize(0, 1)
         
         spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
         spatial_maps = spatial_maps/spatial_maps.mean()
         spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
         
+       
+        
+        if mode != 'train':
+            dataset = TensorDataset(
+                spatial_maps.permute(0, 3, 1, 2).float(), 
+                torch.from_numpy(X).float(),
+            )   
+            
+            return DataLoader(dataset, batch_size=batch_size, shuffle=False)
         
         dataset = TensorDataset(
             spatial_maps.permute(0, 3, 1, 2).float(), 
             torch.from_numpy(X).float(),
             torch.from_numpy(y).float()
         )   
-        
+         
         split = int((1-test_size)*len(dataset))
         train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -66,7 +77,6 @@ class GeoCNNEstimator(Estimator):
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         model.to(device)
         # model = torch.compile(model)
@@ -114,10 +124,11 @@ class GeoCNNEstimator(Estimator):
             
             pbar.update()
             pbar.set_description(f'{criterion.__class__.__name__}: {np.mean(losses):.4f}')
-            
+        
+        best_model.eval()
         return best_model, losses
         
-    def fit(self, X, y, xy, init_betas='ols', spatial_dim=64, in_channels=1, init=0.1):
+    def fit(self, X, y, xy, init_betas='ols', max_epochs=100, spatial_dim=64, in_channels=1, init=0.1):
         assert init_betas in ['ones', 'ols']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
         
@@ -130,21 +141,30 @@ class GeoCNNEstimator(Estimator):
             ols.fit(X, y)
             beta_init = ols.get_betas().reshape(-1, )
             
-        print(beta_init)
+        # print(beta_init)
         
-        self._build_cnn(
+        model, losses = self._build_cnn(
             X, y,
             xy,
             beta_init, 
             in_channels=in_channels, 
             init=init, 
             spatial_dim=spatial_dim, 
-            max_epochs=100,
+            max_epochs=max_epochs,
             learning_rate=0.001
-        )      
+        )    
         
-    def get_betas(self):
-        return None
+        self.model = model  
+        
+    @torch.no_grad()
+    def get_betas(self, X, xy, spatial_dim=64):
+        infer_dataloader = self._build_dataloaders(X=X, y=None, xy=xy, spatial_dim=spatial_dim, mode='infer')
+        beta_list = []
+        for batch_spatial, batch_x in infer_dataloader:
+            outputs, betas = self.model(batch_spatial.to(device), batch_x.to(device))
+            beta_list.extend(betas.cpu().numpy())
+            
+        return np.array(beta_list)
 
 
 
@@ -180,7 +200,7 @@ class GCNNWR(nn.Module):
             nn.Linear(64, 16),
             nn.PReLU(init=init),
             
-            nn.Linear(16, self.dim+1)
+            nn.Linear(16, self.dim)
         )
 
 
