@@ -8,6 +8,13 @@ class GeneRegulatoryNetwork:
             
     def get_regulators(self, adata, target_gene):
         base_GRN = self.data
+        
+        df = base_GRN[base_GRN.gene_short_name==target_gene][
+            np.intersect1d(adata.var_names, base_GRN[base_GRN.gene_short_name==target_gene].columns)].sum()
+        df = df[df!=0]
+        
+        return df.index.tolist()
+        
         tf = base_GRN[base_GRN.gene_short_name==target_gene][
                 np.intersect1d(
                     adata.var_names, 

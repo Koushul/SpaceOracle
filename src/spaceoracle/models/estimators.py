@@ -15,6 +15,7 @@ from .spatial_map import xy2spatial
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+
 class Estimator(ABC):
     
     def __init__(self):
@@ -43,7 +44,15 @@ class LeastSquaredEstimator(Estimator):
 class GeoCNNEstimator(Estimator):
     
     
-    def _build_dataloaders(self, X, y, xy, spatial_dim, mode='train', batch_size=32, test_size=0.2):
+    def _build_dataloaders(
+        self, 
+        X, y, xy, 
+        spatial_dim, 
+        mode='train', 
+        batch_size=32, 
+        test_size=0.2
+        ):
+        
         norm = Normalize(0, 1)
         
         spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
@@ -69,11 +78,20 @@ class GeoCNNEstimator(Estimator):
         split = int((1-test_size)*len(dataset))
         train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=len(valid_dataset), shuffle=False)
+        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
 
         return train_dataloader, valid_dataloader
         
-    def _build_cnn(self, X, y, xy, beta_init, in_channels, init, spatial_dim, max_epochs, learning_rate):
+    def _build_cnn(
+        self, 
+        X, y, xy, 
+        beta_init, 
+        in_channels, 
+        init, 
+        spatial_dim, 
+        max_epochs, 
+        learning_rate
+        ):
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -86,25 +104,51 @@ class GeoCNNEstimator(Estimator):
         best_score = np.inf
         best_iter = 0
         
-        
         train_dataloader, valid_dataloader = self._build_dataloaders(X, y, xy, spatial_dim)
         
+        
+
+        
+        model.eval()
+        with torch.no_grad():
+            total_loss = 0
+            total_linear_err = 0
+            for batch_spatial, batch_x, batch_y in valid_dataloader:
+                _x = batch_x.cpu().numpy()
+                _y = batch_y.cpu().numpy()
+                
+                ols_pred = model.betas[0].copy()
+
+                for w in range(len(model.betas)-1):
+                    ols_pred += _x[:, w]*model.betas[w+1].copy()
+                    
+                ols_err = np.mean((_y - ols_pred)**2)
+                
+                
+                outputs, _ = model(batch_spatial.to(device), batch_x.to(device))
+                loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+                
+                total_loss += loss.item()
+                total_linear_err += ols_err
+                
+            
+            init_loss = total_loss / len(valid_dataloader)
+            ols_loss = total_linear_err / len(valid_dataloader)
+            
+
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
                 model.train()
                 total_loss = 0
                 for batch_spatial, batch_x, batch_y in train_dataloader:
-                    
                     optimizer.zero_grad()
-            
                     outputs, _ = model(batch_spatial.to(device), batch_x.to(device))
                     loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
                     loss.backward()
                     optimizer.step()
-                    
                     total_loss += loss.item()
                     
-                avg_training_loss = total_loss / len(train_dataloader)
+                # avg_training_loss = total_loss / len(train_dataloader)
 
                 model.eval()
                 with torch.no_grad():
@@ -117,18 +161,28 @@ class GeoCNNEstimator(Estimator):
                     avg_validation_loss = total_loss / len(valid_dataloader)
                 
                 losses.append(avg_validation_loss)
-    
-            if np.mean(losses) < best_score:
-                best_model = copy.deepcopy(model)
-                best_iter = epoch
+
+                pbar.set_description(f'MSE: {np.mean(losses):.4f} | OLS: {ols_loss:.4f}')
             
-            pbar.update()
-            pbar.set_description(f'{criterion.__class__.__name__}: {np.mean(losses):.4f}')
-        
+                if np.mean(losses) < best_score:
+                    best_model = copy.deepcopy(model)
+                    best_iter = epoch
+            
         best_model.eval()
+        
         return best_model, losses
         
-    def fit(self, X, y, xy, init_betas='ols', max_epochs=100, spatial_dim=64, in_channels=1, init=0.1):
+    def fit(
+        self, 
+        X, y, xy, 
+        init_betas='ols', 
+        max_epochs=100, 
+        learning_rate=0.001, 
+        spatial_dim=64, 
+        in_channels=1, 
+        init=0.1
+        ):
+        
         assert init_betas in ['ones', 'ols']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
         
@@ -143,28 +197,42 @@ class GeoCNNEstimator(Estimator):
             
         self.beta_init = beta_init
         
-        model, losses = self._build_cnn(
-            X, y,
-            xy,
-            beta_init, 
-            in_channels=in_channels, 
-            init=init, 
-            spatial_dim=spatial_dim, 
-            max_epochs=max_epochs,
-            learning_rate=0.001
-        )    
+
         
-        self.model = model  
+        try:
+            model, losses = self._build_cnn(
+                X, y,
+                xy,
+                beta_init, 
+                in_channels=in_channels, 
+                init=init, 
+                spatial_dim=spatial_dim, 
+                max_epochs=max_epochs,
+                learning_rate=learning_rate
+            ) 
+            
+            self.model = model  
+            self.losses = losses
+        
+        except KeyboardInterrupt:
+            print('Training interrupted...')
+            pass
+        
+
+        
         
     @torch.no_grad()
     def get_betas(self, X, xy, spatial_dim=64):
-        infer_dataloader = self._build_dataloaders(X=X, y=None, xy=xy, spatial_dim=spatial_dim, mode='infer')
+        infer_dataloader = self._build_dataloaders(
+            X=X, y=None, xy=xy, spatial_dim=spatial_dim, mode='infer')
         beta_list = []
+        y_pred = []
         for batch_spatial, batch_x in infer_dataloader:
             outputs, betas = self.model(batch_spatial.to(device), batch_x.to(device))
             beta_list.extend(betas.cpu().numpy())
+            y_pred.extend(outputs.cpu().numpy())
             
-        return np.array(beta_list)
+        return np.array(beta_list), np.array(y_pred)
 
 
 
