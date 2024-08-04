@@ -61,7 +61,7 @@ class GeoCNNEstimator(Estimator):
         
        
         
-        if mode != 'train':
+        if mode == 'infer':
             dataset = TensorDataset(
                 spatial_maps.permute(0, 3, 1, 2).float(), 
                 torch.from_numpy(X).float(),
@@ -69,18 +69,33 @@ class GeoCNNEstimator(Estimator):
             
             return DataLoader(dataset, batch_size=batch_size, shuffle=False)
         
-        dataset = TensorDataset(
-            spatial_maps.permute(0, 3, 1, 2).float(), 
-            torch.from_numpy(X).float(),
-            torch.from_numpy(y).float()
-        )   
-         
-        split = int((1-test_size)*len(dataset))
-        train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
+        if mode == 'train_test':
+        
+            dataset = TensorDataset(
+                spatial_maps.permute(0, 3, 1, 2).float(), 
+                torch.from_numpy(X).float(),
+                torch.from_numpy(y).float()
+            )   
+            
+            split = int((1-test_size)*len(dataset))
+            train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
+            train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
 
-        return train_dataloader, valid_dataloader
+            return train_dataloader, valid_dataloader
+        
+        if mode == 'train':
+            dataset = TensorDataset(
+                spatial_maps.permute(0, 3, 1, 2).float(), 
+                torch.from_numpy(X).float(),
+                torch.from_numpy(y).float()
+            )  
+            
+            train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+            
+            return train_dataloader, valid_dataloader
+            
         
     def _build_cnn(
         self, 
