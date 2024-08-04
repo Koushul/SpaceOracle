@@ -267,7 +267,7 @@ class GCNNWR(nn.Module):
             
             nn.Linear(64, 16),
             nn.PReLU(init=init),
-            
+            nn.Dropout(0.2),
             nn.Linear(16, self.dim)
         )
 
