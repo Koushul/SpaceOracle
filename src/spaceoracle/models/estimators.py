@@ -10,7 +10,7 @@ from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 
-from .spatial_map import xy2spatial
+from .spatial_map import xy2spatial, xyc2spatial
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -55,11 +55,16 @@ class GeoCNNEstimator(Estimator):
         
         norm = Normalize(0, 1)
         
-        spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
-        spatial_maps = spatial_maps/spatial_maps.mean()
-        spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
+        if xy.shape[1] == 2:
+            spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
+            spatial_maps = spatial_maps/spatial_maps.mean()
+            spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
         
-       
+        elif xy.shape[1] == 3:
+            spatial_maps = xyc2spatial(xy, spatial_dim, spatial_dim)
+            spatial_maps = spatial_maps/spatial_maps.mean()
+            spatial_maps = norm(torch.from_numpy(spatial_maps))
+        
         
         if mode == 'infer':
             dataset = TensorDataset(
