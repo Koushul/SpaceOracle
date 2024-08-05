@@ -100,6 +100,7 @@ class GeoCNNEstimator(Estimator):
     def _build_cnn(
         self, 
         X, y, xy, 
+        labels,
         beta_init, 
         in_channels, 
         init, 
@@ -107,6 +108,7 @@ class GeoCNNEstimator(Estimator):
         max_epochs, 
         learning_rate
         ):
+        
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -120,9 +122,6 @@ class GeoCNNEstimator(Estimator):
         best_iter = 0
         
         train_dataloader, valid_dataloader = self._build_dataloaders(X, y, xy, spatial_dim)
-        
-        
-
         
         model.eval()
         with torch.no_grad():
@@ -198,19 +197,22 @@ class GeoCNNEstimator(Estimator):
         init=0.1
         ):
         
-        assert init_betas in ['ones', 'ols']
+        assert init_betas in ['ones', 'ols', 'random']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
         
         
         if init_betas == 'ones':
-            beta_init = torch.ones(X.shape[1]+1).reshape(-1, )
+            beta_init = torch.ones(X.shape[1]+1)
         
         elif init_betas == 'ols':
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
-            beta_init = ols.get_betas().reshape(-1, )
+            beta_init = ols.get_betas()
             
-        self.beta_init = beta_init
+        elif init_betas == 'random':
+            beta_init = torch.randn(X.shape[1]+1)
+            
+        self.beta_init = beta_init.reshape(-1, )
         
 
         
@@ -218,6 +220,7 @@ class GeoCNNEstimator(Estimator):
             model, losses = self._build_cnn(
                 X, y,
                 xy,
+                labels,
                 beta_init, 
                 in_channels=in_channels, 
                 init=init, 
