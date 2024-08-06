@@ -11,7 +11,12 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
 
 
 
@@ -191,7 +196,7 @@ class GeoCNNEstimator(Estimator):
                 
                 losses.append(avg_validation_loss)
 
-                pbar.set_description(f'MSE: {np.mean(losses):.4f} | OLS: {ols_loss:.4f}')
+                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {ols_loss:.4f}')
             
                 if np.mean(losses) < best_score:
                     best_model = copy.deepcopy(model)
@@ -259,13 +264,13 @@ class GeoCNNEstimator(Estimator):
         
         
     @torch.no_grad()
-    def get_betas(self, X, xy, spatial_dim=64):
+    def get_betas(self, X, xy, labels, spatial_dim=64):
         infer_dataloader = self._build_dataloaders(
-            X=X, y=None, xy=xy, spatial_dim=spatial_dim, mode='infer')
+            X=X, y=None, xy=xy, labels=labels, spatial_dim=spatial_dim, mode='infer')
         beta_list = []
         y_pred = []
-        for batch_spatial, batch_x in infer_dataloader:
-            outputs, betas = self.model(batch_spatial.to(device), batch_x.to(device))
+        for batch_spatial, batch_x, batch_labels in infer_dataloader:
+            outputs, betas = self.model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
             beta_list.extend(betas.cpu().numpy())
             y_pred.extend(outputs.cpu().numpy())
             

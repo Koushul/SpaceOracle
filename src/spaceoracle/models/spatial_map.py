@@ -55,8 +55,8 @@ def cluster_masks(x, y, c, m, n):
             distances = np.array([distance([x, y], center) for center in centers]).reshape(m, n)
             nearest_center_idx = np.argmin(distances)
             u, v = np.unravel_index(nearest_center_idx, (m, n))
-        
-            cluster_mask[int(cluster)][u, v] += 1
+
+            cluster_mask[int(cluster)][u, v] = 1
             
             pbar.update()
         
