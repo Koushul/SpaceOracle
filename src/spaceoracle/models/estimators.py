@@ -197,6 +197,7 @@ class GeoCNNEstimator(Estimator):
         init=0.1
         ):
         
+        
         assert init_betas in ['ones', 'ols', 'random']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
         
