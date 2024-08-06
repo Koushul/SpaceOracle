@@ -35,3 +35,45 @@ def xy2spatial(x, y, m, n):
             pbar.update()
         
     return spatial_maps
+
+##TODO: combine this with xy2spatial
+def cluster_masks(x, y, c, m, n):
+    assert len(x) == len(y) == len(c)
+    xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
+    xyc = np.column_stack([x, y, c]).astype(float)
+    
+    centers = generate_grid_centers(m, n, xmin, xmax, ymin, ymax)
+    clusters = np.unique(c).astype(int)
+    
+    cluster_mask = np.zeros((len(clusters), m, n))
+    
+    with tqdm(total=len(xyc), disable=False) as pbar:
+        
+        for s, coord in enumerate(xyc):
+            x, y, cluster = coord
+            distances = np.array([distance([x, y], center) for center in centers]).reshape(m, n)
+            nearest_center_idx = np.argmin(distances)
+            u, v = np.unravel_index(nearest_center_idx, (m, n))
+        
+            cluster_mask[int(cluster)][u, v] += 1
+            
+            pbar.update()
+        
+        
+    return cluster_mask
+
+
+
+def apply_masks_to_images(images, masks):
+    num_images, img_height, img_width = images.shape
+    num_masks, mask_height, mask_width = masks.shape
+    
+    assert img_height == mask_height and img_width == mask_width
+    
+    output = np.zeros((num_images, num_masks, img_height, img_width))
+    
+    for i in range(num_images):
+        for j in range(num_masks):
+            output[i, j] = images[i] * masks[j]
+    
+    return output
