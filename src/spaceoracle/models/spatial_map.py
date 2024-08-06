@@ -47,7 +47,8 @@ def cluster_masks(x, y, c, m, n):
     
     cluster_mask = np.zeros((len(clusters), m, n))
     
-    with tqdm(total=len(xyc), disable=False) as pbar:
+    
+    with tqdm(total=len(xyc), disable=False, desc='Generating spatial cluster maps') as pbar:
         
         for s, coord in enumerate(xyc):
             x, y, cluster = coord
@@ -62,8 +63,7 @@ def cluster_masks(x, y, c, m, n):
         
     return cluster_mask
 
-
-
+@jit
 def apply_masks_to_images(images, masks):
     num_images, img_height, img_width = images.shape
     num_masks, mask_height, mask_width = masks.shape

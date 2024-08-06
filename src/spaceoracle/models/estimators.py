@@ -9,8 +9,7 @@ import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
-
-from .spatial_map import xy2spatial
+from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -46,7 +45,8 @@ class GeoCNNEstimator(Estimator):
     
     def _build_dataloaders(
         self, 
-        X, y, xy, 
+        X, y, xy,
+        labels, 
         spatial_dim, 
         mode='train', 
         batch_size=32, 
@@ -55,16 +55,23 @@ class GeoCNNEstimator(Estimator):
         
         norm = Normalize(0, 1)
         
-        spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
-        spatial_maps = spatial_maps/spatial_maps.mean()
-        spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
+        # spatial_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
+        # spatial_maps = spatial_maps/spatial_maps.mean()
+        # spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
         
-       
+        
+        distance_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
+        masks = cluster_masks(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+        spatial_maps = norm(torch.from_numpy(apply_masks_to_images(distance_maps, masks)))
+        
+        # spatial_maps = torch.randn(1000, 128, 128, 13)
         
         if mode == 'infer':
             dataset = TensorDataset(
-                spatial_maps.permute(0, 3, 1, 2).float(), 
+                # spatial_maps.permute(0, 3, 1, 2).float(),
+                spatial_maps.float(), 
                 torch.from_numpy(X).float(),
+                torch.from_numpy(labels).long()
             )   
             
             return DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -72,9 +79,11 @@ class GeoCNNEstimator(Estimator):
         if mode == 'train_test':
         
             dataset = TensorDataset(
-                spatial_maps.permute(0, 3, 1, 2).float(), 
+                # spatial_maps.permute(0, 3, 1, 2).float(), 
+                spatial_maps.float(), 
                 torch.from_numpy(X).float(),
-                torch.from_numpy(y).float()
+                torch.from_numpy(y).float(),
+                torch.from_numpy(labels).long()
             )   
             
             split = int((1-test_size)*len(dataset))
@@ -86,9 +95,11 @@ class GeoCNNEstimator(Estimator):
         
         if mode == 'train':
             dataset = TensorDataset(
-                spatial_maps.permute(0, 3, 1, 2).float(), 
+                # spatial_maps.permute(0, 3, 1, 2).float(),
+                spatial_maps.float(), 
                 torch.from_numpy(X).float(),
-                torch.from_numpy(y).float()
+                torch.from_numpy(y).float(),
+                torch.from_numpy(labels).long()
             )  
             
             train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -104,10 +115,12 @@ class GeoCNNEstimator(Estimator):
         beta_init, 
         in_channels, 
         init, 
-        spatial_dim, 
+        spatial_dim,
+        mode, 
         max_epochs, 
         learning_rate
         ):
+        
         
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
@@ -121,25 +134,27 @@ class GeoCNNEstimator(Estimator):
         best_score = np.inf
         best_iter = 0
         
-        train_dataloader, valid_dataloader = self._build_dataloaders(X, y, xy, spatial_dim)
+        train_dataloader, valid_dataloader = self._build_dataloaders(X, y, xy, labels, spatial_dim, mode=mode)
         
         model.eval()
         with torch.no_grad():
             total_loss = 0
             total_linear_err = 0
-            for batch_spatial, batch_x, batch_y in valid_dataloader:
+            for batch_spatial, batch_x, batch_y, batch_labels in valid_dataloader:
                 _x = batch_x.cpu().numpy()
                 _y = batch_y.cpu().numpy()
                 
-                ols_pred = model.betas[0].copy()
+                _betas = np.array(beta_init)
+                
+                ols_pred = _betas[0]
 
-                for w in range(len(model.betas)-1):
-                    ols_pred += _x[:, w]*model.betas[w+1].copy()
+                for w in range(len(_betas)-1):
+                    ols_pred += _x[:, w]*_betas[w+1]
                     
                 ols_err = np.mean((_y - ols_pred)**2)
                 
                 
-                outputs, _ = model(batch_spatial.to(device), batch_x.to(device))
+                outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
                 loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
                 
                 total_loss += loss.item()
@@ -154,9 +169,9 @@ class GeoCNNEstimator(Estimator):
             for epoch in pbar:
                 model.train()
                 total_loss = 0
-                for batch_spatial, batch_x, batch_y in train_dataloader:
+                for batch_spatial, batch_x, batch_y, batch_labels in train_dataloader:
                     optimizer.zero_grad()
-                    outputs, _ = model(batch_spatial.to(device), batch_x.to(device))
+                    outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
                     loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
                     loss.backward()
                     optimizer.step()
@@ -167,8 +182,8 @@ class GeoCNNEstimator(Estimator):
                 model.eval()
                 with torch.no_grad():
                     total_loss = 0
-                    for batch_spatial, batch_x, batch_y in valid_dataloader:
-                        outputs, _ = model(batch_spatial.to(device), batch_x.to(device))
+                    for batch_spatial, batch_x, batch_y, batch_labels in valid_dataloader:
+                        outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
                         loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
                         total_loss += loss.item()
                     
@@ -189,12 +204,14 @@ class GeoCNNEstimator(Estimator):
     def fit(
         self, 
         X, y, xy, 
+        labels,
         init_betas='ols', 
         max_epochs=100, 
         learning_rate=0.001, 
         spatial_dim=64, 
         in_channels=1, 
-        init=0.1
+        init=0.1,
+        mode='train'
         ):
         
         
@@ -208,12 +225,12 @@ class GeoCNNEstimator(Estimator):
         elif init_betas == 'ols':
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
-            beta_init = ols.get_betas()
+            beta_init = ols.get_betas().reshape(-1, )
             
         elif init_betas == 'random':
             beta_init = torch.randn(X.shape[1]+1)
             
-        self.beta_init = beta_init.reshape(-1, )
+        self.beta_init = np.array(beta_init).reshape(-1, )
         
 
         
@@ -222,12 +239,13 @@ class GeoCNNEstimator(Estimator):
                 X, y,
                 xy,
                 labels,
-                beta_init, 
+                self.beta_init, 
                 in_channels=in_channels, 
                 init=init, 
                 spatial_dim=spatial_dim, 
                 max_epochs=max_epochs,
-                learning_rate=learning_rate
+                learning_rate=learning_rate,
+                mode=mode,
             ) 
             
             self.model = model  
@@ -291,10 +309,10 @@ class GCNNWR(nn.Module):
         )
 
 
-    def forward(self, inputs_dis, inputs_x):
+    def forward(self, inputs_dis, inputs_x, inputs_labels):
         x = self.conv_layers(inputs_dis)
         x = self.fc_layers(x)
-
+        
         ##TODO: make this more efficient
         y_pred = x[:, 0]*self.betas[0]
         for w in range(self.dim-1):
