@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
-from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images
+from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images, xyc2spatial
 
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -64,11 +64,16 @@ class GeoCNNEstimator(Estimator):
         # spatial_maps = spatial_maps/spatial_maps.mean()
         # spatial_maps = norm(torch.from_numpy(spatial_maps)).unsqueeze(3)
         
+        # distance_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
+        # masks = cluster_masks(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+        # spatial_maps = norm(torch.from_numpy(apply_masks_to_images(distance_maps, masks)))
         
-        distance_maps = xy2spatial(xy[:, 0], xy[:, 1], spatial_dim, spatial_dim)
-        masks = cluster_masks(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
-        spatial_maps = norm(torch.from_numpy(apply_masks_to_images(distance_maps, masks)))
+        spatial_maps = norm(
+            torch.from_numpy(
+                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+            ).float()
         
+        )
         # spatial_maps = torch.randn(1000, 128, 128, 13)
         
         if mode == 'infer':
@@ -92,7 +97,9 @@ class GeoCNNEstimator(Estimator):
             )   
             
             split = int((1-test_size)*len(dataset))
-            train_dataset, valid_dataset = random_split(dataset, [split, len(dataset)-split])
+            generator = torch.Generator().manual_seed(42)
+            train_dataset, valid_dataset = random_split(
+                dataset, [split, len(dataset)-split], generator=generator)
             train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
             valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
 
@@ -254,11 +261,14 @@ class GeoCNNEstimator(Estimator):
             ) 
             
             self.model = model  
-            self.losses = losses
+            
         
         except KeyboardInterrupt:
             print('Training interrupted...')
             pass
+        
+        self.losses = losses
+        
         
 
         
@@ -279,10 +289,11 @@ class GeoCNNEstimator(Estimator):
 
 
 class GCNNWR(nn.Module):
-    def __init__(self, betas, in_channels=1, init=0.1):
+    def __init__(self, betas, use_labels=True, in_channels=1, init=0.1):
         super(GCNNWR, self).__init__()
         self.dim = betas.shape[0]
         self.betas = list(betas)
+        self.use_labels = use_labels
         
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
