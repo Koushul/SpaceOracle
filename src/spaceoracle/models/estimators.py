@@ -1,4 +1,6 @@
 import numpy as np
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
 import copy
@@ -10,6 +12,8 @@ from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images, xyc2spatial
+
+
 
 if torch.backends.mps.is_available():
     device = torch.device("mps")
