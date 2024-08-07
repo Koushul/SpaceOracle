@@ -65,10 +65,8 @@ def xyc2spatial(x, y, c, m, n):
             pbar.update()
     
     spatial_maps = np.repeat(np.expand_dims(spatial_maps, axis=1), len(clusters), axis=1)
-    
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
         
-    
     return spatial_maps * mask
     
 
