@@ -2,6 +2,8 @@ from numba import jit
 from tqdm import tqdm
 import numpy as np
 
+from scipy.spatial import KDTree
+
 
 @jit
 def generate_grid_centers(m, n, xmin, xmax, ymin, ymax):
@@ -77,3 +79,13 @@ def apply_masks_to_images(images, masks):
             output[i, j] = images[i] * masks[j]
     
     return output
+
+def xy2distance(coords, n_top):
+
+    tree = KDTree(coords)
+    distances = []
+    for point in coords:
+        dist, indices = tree.query(point, k=n_top + 1)
+        distances.append(dist[1:])
+
+    return np.array(distances)
