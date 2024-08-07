@@ -1,11 +1,9 @@
 import sys
+sys.path.append('src')
 
 from sklearn.datasets import make_regression
-sys.path.append('../src')
-
 from unittest import TestCase
 import numpy as np
-import pytest 
 
 from spaceoracle.models.spatial_map import xyc2spatial
 
