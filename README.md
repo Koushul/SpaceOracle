@@ -33,6 +33,8 @@ estimator.fit(
 ```
 
 ```{python}
+check_betas = SimulationBetaCallback()
+
 check_betas(
     estimator.get_betas(
         SimulatedData.X, 
