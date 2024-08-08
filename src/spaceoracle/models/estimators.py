@@ -16,7 +16,6 @@ from .spatial_map import xyc2spatial
 
 from ..tools.utils import set_seed
 
-
 set_seed(42)
 
 

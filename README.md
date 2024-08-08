@@ -4,7 +4,14 @@
 
 Apple Silicon requires clang for velocyto:
 
-```{pytohn}  
+```{pytohn}
 brew install llvm libomp
 export CC=/opt/homebrew/opt/llvm/bin/clang
+```
+
+
+Example: test a model on simulated data
+
+```{python}
+
 ```
