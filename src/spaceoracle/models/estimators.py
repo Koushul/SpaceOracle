@@ -76,6 +76,12 @@ def _build_dataloaders(
     g = torch.Generator()
     g.manual_seed(42)
     
+    params = {
+        'batch_size': batch_size,
+        'worker_init_fn': seed_worker,
+        'generator': g
+    }
+    
     
     if mode == 'infer':
         dataset = TensorDataset(
@@ -84,7 +90,7 @@ def _build_dataloaders(
             torch.from_numpy(labels).long()
         )   
         
-        return DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
+        return DataLoader(dataset, shuffle=False, **params)
     
     # otherwise
     
@@ -96,10 +102,9 @@ def _build_dataloaders(
     )  
     
 
-
     if mode == 'train':
-        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, worker_init_fn=seed_worker, generator=g)
-        valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
+        train_dataloader = DataLoader(dataset, shuffle=True, **params)
+        valid_dataloader = DataLoader(dataset, shuffle=False, **params)
         
         return train_dataloader, valid_dataloader
     
@@ -108,8 +113,8 @@ def _build_dataloaders(
         generator = torch.Generator().manual_seed(42)
         train_dataset, valid_dataset = random_split(
             dataset, [split, len(dataset)-split], generator=generator)
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False, worker_init_fn=seed_worker, generator=g)
+        train_dataloader = DataLoader(train_dataset, shuffle=True, **params)
+        valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
 
         return train_dataloader, valid_dataloader
     
