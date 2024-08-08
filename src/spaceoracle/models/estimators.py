@@ -16,8 +16,7 @@ from .spatial_map import xyc2spatial
 
 from ..tools.utils import set_seed, seed_worker
 
-g = torch.Generator()
-g.manual_seed(42)
+
 set_seed(42)
 
 
@@ -65,6 +64,7 @@ def _build_dataloaders(
     ):
     
     assert mode in ['train', 'infer', 'train_test']
+    set_seed(42)
     
 
     spatial_maps = norm(
@@ -72,6 +72,9 @@ def _build_dataloaders(
             xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
         ).float()
     )
+    
+    g = torch.Generator()
+    g.manual_seed(42)
     
     if mode == 'infer':
         dataset = TensorDataset(
@@ -91,8 +94,10 @@ def _build_dataloaders(
         torch.from_numpy(labels).long()
     )  
     
+
+
     if mode == 'train':
-        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
+        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, worker_init_fn=seed_worker, generator=g)
         valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
         
         return train_dataloader, valid_dataloader
@@ -142,6 +147,7 @@ class GeoCNNEstimator(Estimator):
     
     def _estimate_baseline(self, dataloader, beta_init):
         total_linear_err = 0
+        torch.manual_seed(42)
         for _, batch_x, batch_y, _ in dataloader:
             _x = batch_x.cpu().numpy()
             _y = batch_y.cpu().numpy()
@@ -173,6 +179,7 @@ class GeoCNNEstimator(Estimator):
         ):
         
         
+           
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -186,11 +193,10 @@ class GeoCNNEstimator(Estimator):
         best_iter = 0
         
         train_dataloader, valid_dataloader = _build_dataloaders(
-            X, y, xy, labels, spatial_dim, mode=mode)
+                    X, y, xy, labels, spatial_dim, mode=mode)
     
         baseline_loss = self._estimate_baseline(valid_dataloader, beta_init)
             
-
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
                 training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
@@ -284,6 +290,7 @@ class GeoCNNEstimator(Estimator):
 
 class GCNNWR(nn.Module):
     def __init__(self, betas, use_labels=True, in_channels=1, init=0.1):
+        set_seed(42)
         super(GCNNWR, self).__init__()
         self.dim = betas.shape[0]
         self.betas = list(betas)
