@@ -14,8 +14,10 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 from .spatial_map import xyc2spatial
 
-from ..tools.utils import set_seed
+from ..tools.utils import set_seed, seed_worker
 
+g = torch.Generator()
+g.manual_seed(42)
 set_seed(42)
 
 
@@ -64,6 +66,7 @@ def _build_dataloaders(
     
     assert mode in ['train', 'infer', 'train_test']
     
+
     spatial_maps = norm(
         torch.from_numpy(
             xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
@@ -77,7 +80,7 @@ def _build_dataloaders(
             torch.from_numpy(labels).long()
         )   
         
-        return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
     
     # otherwise
     
@@ -89,8 +92,8 @@ def _build_dataloaders(
     )  
     
     if mode == 'train':
-        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
+        valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
         
         return train_dataloader, valid_dataloader
     
@@ -99,8 +102,8 @@ def _build_dataloaders(
         generator = torch.Generator().manual_seed(42)
         train_dataset, valid_dataset = random_split(
             dataset, [split, len(dataset)-split], generator=generator)
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
+        valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False, worker_init_fn=seed_worker, generator=g)
 
         return train_dataloader, valid_dataloader
     
@@ -109,7 +112,6 @@ def _build_dataloaders(
 
     
 class GeoCNNEstimator(Estimator):
-    
     def _training_loop(self, model, dataloader, criterion, optimizer):
         model.train()
         total_loss = 0
