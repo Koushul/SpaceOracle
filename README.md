@@ -31,3 +31,13 @@ estimator.fit(
     mode = 'train',
 )
 ```
+
+```{python}
+check_betas(
+    estimator.get_betas(
+        SimulatedData.X, 
+        SimulatedData.xy, 
+        SimulatedData.clusters
+    )[0]
+)
+```
