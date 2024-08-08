@@ -1,5 +1,6 @@
 import numpy as np
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
@@ -11,7 +12,12 @@ import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
-from .spatial_map import xy2spatial, cluster_masks, apply_masks_to_images, xyc2spatial
+from .spatial_map import xyc2spatial
+
+from ..tools.utils import set_seed
+
+
+set_seed(42)
 
 
 if torch.backends.mps.is_available():
@@ -74,15 +80,22 @@ def _build_dataloaders(
         
         return DataLoader(dataset, batch_size=batch_size, shuffle=False)
     
-    if mode == 'train_test':
+    # otherwise
     
-        dataset = TensorDataset(
-            spatial_maps.float(), 
-            torch.from_numpy(X).float(),
-            torch.from_numpy(y).float(),
-            torch.from_numpy(labels).long()
-        )   
+    dataset = TensorDataset(
+        spatial_maps.float(), 
+        torch.from_numpy(X).float(),
+        torch.from_numpy(y).float(),
+        torch.from_numpy(labels).long()
+    )  
+    
+    if mode == 'train':
+        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
         
+        return train_dataloader, valid_dataloader
+    
+    if mode == 'train_test':
         split = int((1-test_size)*len(dataset))
         generator = torch.Generator().manual_seed(42)
         train_dataset, valid_dataset = random_split(
@@ -92,18 +105,7 @@ def _build_dataloaders(
 
         return train_dataloader, valid_dataloader
     
-    if mode == 'train':
-        dataset = TensorDataset(
-            spatial_maps.float(), 
-            torch.from_numpy(X).float(),
-            torch.from_numpy(y).float(),
-            torch.from_numpy(labels).long()
-        )  
-        
-        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-        valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-        
-        return train_dataloader, valid_dataloader
+    
 
 
     
@@ -114,7 +116,8 @@ class GeoCNNEstimator(Estimator):
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
             optimizer.zero_grad()
-            outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            outputs, _ = model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             loss.backward()
             optimizer.step()
@@ -128,7 +131,8 @@ class GeoCNNEstimator(Estimator):
         model.eval()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
-            outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            outputs, _ = model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             total_loss += loss.item()
         
@@ -180,7 +184,8 @@ class GeoCNNEstimator(Estimator):
         best_score = np.inf
         best_iter = 0
         
-        train_dataloader, valid_dataloader = _build_dataloaders(X, y, xy, labels, spatial_dim, mode=mode)
+        train_dataloader, valid_dataloader = _build_dataloaders(
+            X, y, xy, labels, spatial_dim, mode=mode)
     
         baseline_loss = self._estimate_baseline(valid_dataloader, beta_init)
             
@@ -233,7 +238,6 @@ class GeoCNNEstimator(Estimator):
             
         self.beta_init = np.array(beta_init).reshape(-1, )
         
-
         
         try:
             model, losses = self._build_cnn(
@@ -268,7 +272,8 @@ class GeoCNNEstimator(Estimator):
         y_pred = []
         
         for batch_spatial, batch_x, batch_labels in infer_dataloader:
-            outputs, betas = self.model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            outputs, betas = self.model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
             beta_list.extend(betas.cpu().numpy())
             y_pred.extend(outputs.cpu().numpy())
             

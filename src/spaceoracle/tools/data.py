@@ -8,7 +8,7 @@ warnings.simplefilter(action='ignore', category=anndata.ImplicitModificationWarn
 
 def load_example_slideseq(path_dir):
     """Load an example SlideSeq dataset."""
-    return [anndata.read_h5ad(i) for i in glob(path_dir + '/*.h5ad')]
+    return [(i, anndata.read_h5ad(i)) for i in glob(path_dir + '/*.h5ad')]
 
 
 def filter_adata(adata, min_counts=300, min_cells=10, n_top_genes=2000):
