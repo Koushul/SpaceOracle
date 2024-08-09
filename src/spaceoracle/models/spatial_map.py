@@ -80,6 +80,10 @@ def apply_masks_to_images(images, masks):
     
     return output
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 def xy2distance(coords, n_top):
 
     tree = KDTree(coords)
