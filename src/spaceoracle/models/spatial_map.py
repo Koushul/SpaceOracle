@@ -38,7 +38,40 @@ def xy2spatial(x, y, m, n):
         
     return spatial_maps
 
-##TODO: combine this with xy2spatial
+# @jit
+def xyc2spatial(x, y, c, m, n):
+    assert len(x) == len(y) == len(c)
+    xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
+    xyc = np.column_stack([x, y, c]).astype(float)
+    
+    centers = generate_grid_centers(m, n, xmin, xmax, ymin, ymax)
+    clusters = np.unique(c).astype(int)
+    
+    spatial_maps = np.zeros((len(x), m, n))
+    mask = np.zeros((len(clusters), m, n))
+    
+    
+    with tqdm(total=len(xyc), disable=False, desc='🌍️ Generating spatial maps') as pbar:
+        
+        for s, coord in enumerate(xyc):
+            x, y, cluster = coord
+            
+            dist_map = np.array([distance((x, y), c) for c in centers]).reshape(m, n)
+            
+            nearest_center_idx = np.argmin(dist_map)
+            u, v = np.unravel_index(nearest_center_idx, (m, n))
+            mask[int(cluster)][u, v] = 1
+
+            spatial_maps[s] = dist_map
+            
+            pbar.update()
+    
+    spatial_maps = np.repeat(np.expand_dims(spatial_maps, axis=1), len(clusters), axis=1)
+    mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
+        
+    return spatial_maps * mask
+    
+
 def cluster_masks(x, y, c, m, n):
     assert len(x) == len(y) == len(c)
     xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
@@ -80,10 +113,6 @@ def apply_masks_to_images(images, masks):
     
     return output
 
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 def xy2distance(coords, n_top):
 
     tree = KDTree(coords)

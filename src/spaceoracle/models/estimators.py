@@ -1,4 +1,7 @@
 import numpy as np
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
 import copy
@@ -13,10 +16,10 @@ from .spatial_map import xyc2spatial
 
 from .vit_blocks import ViT
 
-# from ..tools.utils import set_seed
+from ..tools.utils import set_seed
 
 
-# set_seed(42)
+set_seed(42)
 
 
 if torch.backends.mps.is_available():
@@ -26,16 +29,23 @@ elif torch.cuda.is_available():
 else:
     device = torch.device("cpu")
 
+norm = Normalize(0, 1)
 
 
 class Estimator(ABC):
     
     def __init__(self):
         pass
-    
+        
     @abstractmethod
     def fit(self, X, y):
         pass
+    
+    @abstractmethod
+    def get_betas(self):
+        pass
+
+class VisionEstimator(Estimator):
     
     @torch.no_grad()
     def get_betas(self, X, xy, labels, spatial_dim):
@@ -125,7 +135,7 @@ class Estimator(ABC):
             total_linear_err += ols_err
             
         return total_linear_err / len(dataloader)
-
+    
     def _training_loop(self, model, dataloader, criterion, optimizer):
         model.train()
         total_loss = 0
@@ -139,8 +149,8 @@ class Estimator(ABC):
             total_loss += loss.item()
                     
         return total_loss / len(dataloader)
-
-
+    
+    
     @torch.no_grad()
     def _validation_loop(self, model, dataloader, criterion):
         model.eval()
@@ -152,7 +162,6 @@ class Estimator(ABC):
             total_loss += loss.item()
         
         return total_loss / len(dataloader)
-
     
     
 class LeastSquaredEstimator(Estimator):
@@ -165,8 +174,72 @@ class LeastSquaredEstimator(Estimator):
         return self.betas
     
 
+def _build_dataloaders(
+    X, y, xy,
+    labels, 
+    spatial_dim, 
+    mode='train', 
+    batch_size=32, 
+    test_size=0.2
+    ):
+    
+    assert mode in ['train', 'infer', 'train_test']
+    set_seed(42)
+    
 
-class ViTEstimator(Estimator):
+    spatial_maps = norm(
+        torch.from_numpy(
+            xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+        ).float()
+    )
+    
+    g = torch.Generator()
+    g.manual_seed(42)
+    
+    params = {
+        'batch_size': batch_size,
+        'worker_init_fn': seed_worker,
+        'generator': g
+    }
+    
+    
+    if mode == 'infer':
+        dataset = TensorDataset(
+            spatial_maps.float(), 
+            torch.from_numpy(X).float(),
+            torch.from_numpy(labels).long()
+        )   
+        
+        return DataLoader(dataset, shuffle=False, **params)
+    
+    # otherwise
+    
+    dataset = TensorDataset(
+        spatial_maps.float(), 
+        torch.from_numpy(X).float(),
+        torch.from_numpy(y).float(),
+        torch.from_numpy(labels).long()
+    )  
+    
+
+    if mode == 'train':
+        train_dataloader = DataLoader(dataset, shuffle=True, **params)
+        valid_dataloader = DataLoader(dataset, shuffle=False, **params)
+        
+        return train_dataloader, valid_dataloader
+    
+    if mode == 'train_test':
+        split = int((1-test_size)*len(dataset))
+        generator = torch.Generator().manual_seed(42)
+        train_dataset, valid_dataset = random_split(
+            dataset, [split, len(dataset)-split], generator=generator)
+        train_dataloader = DataLoader(train_dataset, shuffle=True, **params)
+        valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
+
+        return train_dataloader, valid_dataloader
+
+
+class ViTEstimator(VisionEstimator):
 
     def _build_model(
         self, 
@@ -264,25 +337,11 @@ class ViTEstimator(Estimator):
             pass
         
         self.losses = losses
-        
+    
+    
 
     
-class GeoCNNEstimator(Estimator):
-    
-    
-    def _build_dataloaders(
-        self, 
-        X, y, xy,
-        labels, 
-        spatial_dim, 
-        mode='train', 
-        batch_size=32, 
-        test_size=0.2
-        ):
-        
-        return total_loss / len(dataloader)
-    
-            
+class GeoCNNEstimator(VisionEstimator):
         
     def _build_cnn(
         self, 
@@ -297,7 +356,7 @@ class GeoCNNEstimator(Estimator):
         learning_rate
         ):
         
-        
+           
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -310,39 +369,19 @@ class GeoCNNEstimator(Estimator):
         best_score = np.inf
         best_iter = 0
         
-        train_dataloader, valid_dataloader = self._build_dataloaders(
-            X, y, xy, labels, spatial_dim, mode=mode)
+        train_dataloader, valid_dataloader = _build_dataloaders(
+                    X, y, xy, labels, spatial_dim, mode=mode)
     
         baseline_loss = self._estimate_baseline(valid_dataloader, beta_init)
             
-
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
-                model.train()
-                total_loss = 0
-                for batch_spatial, batch_x, batch_y, batch_labels in train_dataloader:
-                    optimizer.zero_grad()
-                    outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
-                    loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
-                    
-                # avg_training_loss = total_loss / len(train_dataloader)
-
-                model.eval()
-                with torch.no_grad():
-                    total_loss = 0
-                    for batch_spatial, batch_x, batch_y, batch_labels in valid_dataloader:
-                        outputs, _ = model(batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
-                        loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-                        total_loss += loss.item()
-                    
-                    avg_validation_loss = total_loss / len(valid_dataloader)
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
+                validation_loss = self._validation_loop(model, valid_dataloader, criterion)
                 
-                losses.append(avg_validation_loss)
+                losses.append(validation_loss)
 
-                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {ols_loss:.4f}')
+                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
             
                 if np.mean(losses) < best_score:
                     best_model = copy.deepcopy(model)
@@ -375,14 +414,13 @@ class GeoCNNEstimator(Estimator):
         elif init_betas == 'ols':
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
-            beta_init = ols.get_betas().reshape(-1, )
+            beta_init = ols.get_betas()
             
         elif init_betas == 'random':
             beta_init = torch.randn(X.shape[1]+1)
             
         self.beta_init = np.array(beta_init).reshape(-1, )
         
-
         
         try:
             model, losses = self._build_cnn(
@@ -399,7 +437,7 @@ class GeoCNNEstimator(Estimator):
             ) 
             
             self.model = model  
-            self.losses = losses
+            
         
         except KeyboardInterrupt:
             print('Training interrupted...')
@@ -410,10 +448,12 @@ class GeoCNNEstimator(Estimator):
 
 
 class GCNNWR(nn.Module):
-    def __init__(self, betas, in_channels=1, init=0.1):
+    def __init__(self, betas, use_labels=True, in_channels=1, init=0.1):
+        set_seed(42)
         super(GCNNWR, self).__init__()
         self.dim = betas.shape[0]
         self.betas = list(betas)
+        self.use_labels = use_labels
         
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
@@ -455,29 +495,3 @@ class GCNNWR(nn.Module):
             y_pred += x[:, w+1]*inputs_x[:, w]*self.betas[w+1]
 
         return y_pred, x
-
-
-if __name__ == '__main__':
-    import numpy as np
-    from sklearn.datasets import make_regression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import mean_squared_error
-    import matplotlib.pyplot as plt
-    
-
-    import sys
-    sys.path.append('../src')
-
-    X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
-    X = StandardScaler().fit_transform(X)
-    y = StandardScaler().fit_transform(y.reshape(-1, 1)).reshape(-1, )
-    xy = np.random.rand(1000, 2)
-    c = np.random.randint(0, 13, size=(1000, 1))
-    
-    estimator = ViTEstimator()
-    print('Fitting...')
-    estimator.fit(X, y, xy, c)
-    print(estimator.get_betas().shape)
-    
-    # y_pred = estimator.predict(X, xy)
