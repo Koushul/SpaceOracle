@@ -40,13 +40,17 @@ class SpatialDataset(Dataset, ABC):
     
 
 class SpaceOracleDataset(SpatialDataset):
+    """
+    returns spatial_info, tf_exp, target_ene_exp, cluster_info
+    """
 
-    def __init__(self, adata, target_gene, spatial_dim=16, annot='rctd_cluster', rotate_maps=True):
+    def __init__(self, adata, target_gene, regulators, spatial_dim=16, 
+    annot='rctd_cluster', rotate_maps=True):
+
         self.adata = adata
-        self.grn = GeneRegulatoryNetwork()
         
         self.target_gene = target_gene
-        self.regulators = self.grn.get_regulators(self.adata, target_gene)
+        self.regulators = regulators
 
         self.spatial_dim = spatial_dim
         self.rotate_maps = rotate_maps

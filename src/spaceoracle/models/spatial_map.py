@@ -37,7 +37,10 @@ def xy2spatial(x, y, m, n):
     return spatial_maps
 
 
-def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=False):
+def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
+    
+    ##FIX ME: This is not correct
+
     assert len(x) == len(y) == len(c)
     xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
     xyc = np.column_stack([x, y, c]).astype(float)
@@ -47,9 +50,6 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=False):
     
     spatial_maps = np.zeros((len(x), m, n))
     mask = np.zeros((len(clusters), m, n))
-    
-    
-    
     with tqdm(total=len(xyc), disable=disable_tqdm, desc='🌍️ Generating spatial maps') as pbar:
         
         for s, coord in enumerate(xyc):
@@ -69,7 +69,8 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=False):
     spatial_maps = np.repeat(np.expand_dims(spatial_maps, axis=1), len(clusters), axis=1)
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
 
-    channel_wise_maps = spatial_maps*mask
+    channel_wise_maps = spatial_maps*mask 
+
         
     assert channel_wise_maps.shape == (len(x), len(clusters), m, n)
     
