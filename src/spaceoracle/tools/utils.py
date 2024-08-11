@@ -51,9 +51,9 @@ def set_seed(seed):
     if torch.backends.mps.is_available():
         torch.mps.manual_seed(seed)
     
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+    # torch.use_deterministic_algorithms(True)
     
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32

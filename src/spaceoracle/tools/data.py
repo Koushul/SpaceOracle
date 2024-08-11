@@ -41,11 +41,9 @@ class SpatialDataset(Dataset, ABC):
 
 class SpaceOracleDataset(SpatialDataset):
 
-    def __init__(self, adata_path, target_gene, spatial_dim=16, annot='cluster', rotate_maps=True):
-        adata = self.load_slideseq(adata_path)
+    def __init__(self, adata, target_gene, spatial_dim=16, annot='rctd_cluster', rotate_maps=True):
+        self.adata = adata
         self.grn = GeneRegulatoryNetwork()
-
-        self.adata = filter_adata(adata, min_counts=500)
         
         self.target_gene = target_gene
         self.regulators = self.grn.get_regulators(self.adata, target_gene)
@@ -56,6 +54,7 @@ class SpaceOracleDataset(SpatialDataset):
         self.X = adata.to_df()[self.regulators].values
         self.y = adata.to_df()[[self.target_gene]].values
         self.clusters = np.array(self.adata.obs[annot])
+        self.n_clusters = len(np.unique(self.clusters))
         self.xy = np.array(self.adata.obsm['spatial'])
         
         self.spatial_maps = xyc2spatial(
@@ -65,10 +64,6 @@ class SpaceOracleDataset(SpatialDataset):
             self.spatial_dim, 
             self.spatial_dim
         )
-
-    def __str__(self):
-        return f'{self.adata.shape[0]} cells, {self.adata.shape[1]} genes'
-
 
     def __getitem__(self, index):
         sp_map = self.spatial_maps[index]
@@ -81,6 +76,9 @@ class SpaceOracleDataset(SpatialDataset):
         cluster_info = torch.tensor(self.clusters[index]).long()
 
         return spatial_info, tf_exp, target_ene_exp, cluster_info
+
+
+
 
 @deprecated('Please use SpatialDataset.load_slideseq instead.')
 def load_example_slideseq(path_dir):
