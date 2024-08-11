@@ -14,8 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 from .spatial_map import xyc2spatial
 
-from ..tools.utils import set_seed, seed_worker
-
+from ..tools.utils import set_seed, seed_worker, deprecated
 
 set_seed(42)
 
@@ -53,7 +52,7 @@ class LeastSquaredEstimator(Estimator):
     def get_betas(self):
         return self.betas
     
-
+@deprecated('Please build the dataloaders from the SpatialDataset class instead.')
 def _build_dataloaders(
     X, y, xy,
     labels, 
@@ -119,7 +118,6 @@ def _build_dataloaders(
         return train_dataloader, valid_dataloader
     
     
-
 
     
 class GeoCNNEstimator(Estimator):
