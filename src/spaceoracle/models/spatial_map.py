@@ -69,7 +69,9 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     spatial_maps = np.repeat(np.expand_dims(spatial_maps, axis=1), len(clusters), axis=1)
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
 
-    channel_wise_maps = spatial_maps*mask 
+    # channel_wise_maps = spatial_maps*mask 
+    channel_wise_maps = (1.0/spatial_maps)*mask 
+    
 
         
     assert channel_wise_maps.shape == (len(x), len(clusters), m, n)

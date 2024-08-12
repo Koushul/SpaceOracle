@@ -366,12 +366,11 @@ class GCNNWR(nn.Module):
 
     
 class BetaModel(nn.Module):
-    def __init__(self, betas, use_labels=True, in_channels=1, init=0.1):
+    def __init__(self, betas, in_channels=1, init=0.1):
         set_seed(42)
         super(BetaModel, self).__init__()
         self.dim = betas.shape[0]
         self.betas = torch.tensor(betas.astype(np.float32)).to(device)
-        self.use_labels = use_labels
         
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
@@ -529,14 +528,17 @@ class GeoCNNEstimatorV2(Estimator):
         annot,
         spatial_dim,
         mode, 
-        max_epochs, 
+        max_epochs,
+        batch_size, 
         learning_rate,
         rotate_maps
         ):
 
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
-                adata, self.target_gene, self.regulators, mode=mode, rotate_maps=rotate_maps, annot=annot, spatial_dim=spatial_dim)
+                adata, self.target_gene, self.regulators, 
+                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size,
+                annot=annot, spatial_dim=spatial_dim)
            
         model = BetaModel(self.beta_init, in_channels=self.n_clusters)
         criterion = nn.MSELoss(reduction='mean')
@@ -578,8 +580,8 @@ class GeoCNNEstimatorV2(Estimator):
         init_betas='ols', 
         max_epochs=100, 
         learning_rate=0.001, 
-        spatial_dim=64, 
-        init=0.1,
+        spatial_dim=64,
+        batch_size=32, 
         mode='train',
         rotate_maps=True
         ):
@@ -610,6 +612,7 @@ class GeoCNNEstimatorV2(Estimator):
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 max_epochs=max_epochs,
+                batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps
             ) 
