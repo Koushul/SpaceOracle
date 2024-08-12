@@ -50,6 +50,7 @@ class LeastSquaredEstimator(Estimator):
     def fit(self, X, y):
         ols_model = OLS(y=y, x=X)
         self.betas = ols_model.betas
+        self.pvals = np.array(ols_model.t_stat)[:, 1]
     
     def get_betas(self):
         return self.betas
@@ -476,7 +477,7 @@ class GeoCNNEstimatorV2(Estimator):
         
     @staticmethod
     def _build_dataloaders_from_adata(adata, target_gene, regulators, batch_size=32, 
-    mode='train', annot='rctd_cluster', spatial_dim=64, test_size=0.2):
+    mode='train', rotate_maps=True, annot='rctd_cluster', spatial_dim=64, test_size=0.2):
 
         assert mode in ['train', 'train_test']
         set_seed(42)
@@ -499,7 +500,7 @@ class GeoCNNEstimatorV2(Estimator):
             regulators=regulators, 
             annot=annot, 
             spatial_dim=spatial_dim,
-            rotate_maps=True
+            rotate_maps=rotate_maps
         )
         
 
@@ -529,12 +530,13 @@ class GeoCNNEstimatorV2(Estimator):
         spatial_dim,
         mode, 
         max_epochs, 
-        learning_rate
+        learning_rate,
+        rotate_maps
         ):
 
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
-                adata, self.target_gene, self.regulators, mode=mode, annot=annot, spatial_dim=spatial_dim)
+                adata, self.target_gene, self.regulators, mode=mode, rotate_maps=rotate_maps, annot=annot, spatial_dim=spatial_dim)
            
         model = BetaModel(self.beta_init, in_channels=self.n_clusters)
         criterion = nn.MSELoss(reduction='mean')
@@ -578,11 +580,12 @@ class GeoCNNEstimatorV2(Estimator):
         learning_rate=0.001, 
         spatial_dim=64, 
         init=0.1,
-        mode='train'
+        mode='train',
+        rotate_maps=True
         ):
         
         
-        assert init_betas in ['ones', 'ols', 'random']
+        assert init_betas in ['ones', 'ols']
         
         self.spatial_dim = spatial_dim  
 
@@ -598,9 +601,6 @@ class GeoCNNEstimatorV2(Estimator):
             ols.fit(X, y)
             beta_init = ols.get_betas()
             
-        elif init_betas == 'random':
-            beta_init = torch.randn(X.shape[1]+1)
-            
         self.beta_init = np.array(beta_init).reshape(-1, )
         
         try:
@@ -610,7 +610,8 @@ class GeoCNNEstimatorV2(Estimator):
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 max_epochs=max_epochs,
-                learning_rate=learning_rate
+                learning_rate=learning_rate,
+                rotate_maps=rotate_maps
             ) 
             
             self.model = model  
