@@ -339,7 +339,7 @@ validators==0.33.0
 # vega-datasets==0.9.0
 # vegafusion==1.6.9
 # vegafusion-python-embed==1.6.9
-velocyto==0.17.17
+# velocyto==0.17.17
 venusian==3.1.0
 vl-convert-python==1.5.1
 watchdog==4.0.1

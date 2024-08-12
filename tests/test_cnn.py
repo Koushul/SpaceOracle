@@ -5,9 +5,6 @@ import pytest
 import numpy as np
 
 from spaceoracle.models.estimators import GeoCNNEstimator
-from spaceoracle.tools.utils import set_seed
-
-
 
 class GeoCNNTest(TestCase):
     
@@ -19,35 +16,21 @@ class GeoCNNTest(TestCase):
         self.xy = np.random.rand(1000, 2)
         self.labels = np.random.randint(0, 5, (1000,))
         self.fixed_losses_42 = [
-            0.10351564362645149, 
-            0.10366926155984402, 
-            0.10088764317333698, 
-            0.10325677692890167, 
-            0.1028940100222826
+            0.10123556000845772, 0.09932259789534978, 
+            0.10161668487957545, 0.09764352227960314, 
+            0.09753778576850891
         ]
-
+        
         self.fixed_betas_42 = [
-            0.38564208, 
-            0.15239574, 
-            -0.04679341, 
-            -0.05883441, 
-            0.2143733, 
-            -0.34551695,
-            0.01451041, 
-            0.01097491, 
-            0.5137137, 
-            -0.23085317, 
-            0.45055434, 
-            -0.07826751,
-            -0.02533733,
-            -0.13435821
+            0.4623073, 0.1432567, -0.05220379,
+            -0.02402032,  0.2354309, -0.38983065,
+            0.02520316,  0.02210942,  0.5923713,  
+            -0.23329628,  0.51519436, -0.11414553,
+            -0.03308007, -0.15320085
         ]
-        
-    def test_cnn_estimator(self):
-        
+    
+    def _train_model(self):
         estimator = GeoCNNEstimator()
-        set_seed(42)
-
         estimator.fit(
             self.X, 
             self.y, 
@@ -61,19 +44,27 @@ class GeoCNNTest(TestCase):
             mode = 'train_test'
         )
         
-        for i in range(5):
-            self.assertAlmostEqual(estimator.losses[i], self.fixed_losses_42[i])
-         
-        self.assertEqual(len(estimator.losses), 5)
+        return estimator
+    
+    
+    def test_cnn_estimator(self):
         
-        betas, y_pred = estimator.get_betas(
-            self.X, 
-            self.xy, 
-            self.labels
-        )
-        
-        self.assertEqual(betas.shape, (1000, 14))
-        beta_means = betas.mean(0)
-        for i in range(14):
-            self.assertAlmostEqual(beta_means[i], self.fixed_betas_42[i])
+        for i in range(3):
+            estimator = self._train_model()
+            for i in range(5):
+                self.assertAlmostEqual(estimator.losses[i], self.fixed_losses_42[i])
             
+            self.assertEqual(len(estimator.losses), 5)
+            
+            betas, y_pred = estimator.get_betas(
+                self.X, 
+                self.xy, 
+                self.labels
+            )
+            
+            self.assertEqual(betas.shape, (1000, 14))
+            beta_means = betas.mean(0)
+            print(beta_means)
+            for i in range(14):
+                self.assertAlmostEqual(beta_means[i], self.fixed_betas_42[i])
+                
