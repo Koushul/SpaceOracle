@@ -238,6 +238,7 @@ class GeoCNNEstimator(Estimator):
         
         return best_model, losses
         
+    @deprecated('Please use GeoCNNEstimatorV2 instead.')
     def fit(
         self, 
         X, y, xy, 
@@ -483,11 +484,6 @@ class GeoCNNEstimatorV2(Estimator):
         xy = adata.obsm['spatial']
         labels = np.array(adata.obs[annot])
     
-        spatial_maps = torch.from_numpy(
-                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
-            ).float()
-        
-        
         g = torch.Generator()
         g.manual_seed(42)
         
@@ -503,7 +499,7 @@ class GeoCNNEstimatorV2(Estimator):
             regulators=regulators, 
             annot=annot, 
             spatial_dim=spatial_dim,
-            rotate_maps=False
+            rotate_maps=True
         )
         
 
