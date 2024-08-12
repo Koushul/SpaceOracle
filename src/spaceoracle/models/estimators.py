@@ -13,6 +13,7 @@ from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from torchvision.transforms import Normalize
 from .spatial_map import xyc2spatial
+from .vit_blocks import ViT
 
 from ..tools.utils import set_seed, seed_worker, deprecated
 from ..tools.data import SpaceOracleDataset
@@ -408,10 +409,7 @@ class BetaModel(nn.Module):
 
         return betas
 
-
-
-class GeoCNNEstimatorV2(Estimator):
-
+class VisionEstimator(Estimator):
     def __init__(self, adata, target_gene):
         assert target_gene in adata.var_names
         self.adata = adata
@@ -518,10 +516,44 @@ class GeoCNNEstimatorV2(Estimator):
             valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
 
             return train_dataloader, valid_dataloader
+        
+        
+    @torch.no_grad()
+    def get_betas(self, xy, labels, spatial_dim=None):
 
+        spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
+        
+        spatial_maps = norm(
+            torch.from_numpy(
+                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+            ).float()
+        )
 
+        dataset = TensorDataset(
+            spatial_maps.float(), 
+            torch.from_numpy(labels).long()
+        )   
 
+        g = torch.Generator()
+        g.manual_seed(42)
+        
+        params = {
+            'batch_size': 64,
+            'worker_init_fn': seed_worker,
+            'generator': g
+        }
+        
+        infer_dataloader = DataLoader(dataset, shuffle=False, **params)
+        
+        beta_list = []
+        
+        for batch_spatial, batch_labels in infer_dataloader:
+            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            beta_list.extend(betas.cpu().numpy())
+            
+        return np.array(beta_list)
 
+class GeoCNNEstimatorV2(VisionEstimator):
     def _build_cnn(
         self, 
         adata,
@@ -626,40 +658,112 @@ class GeoCNNEstimatorV2(Estimator):
             pass
         
         
-        
-        
-    @torch.no_grad()
-    def get_betas(self, xy, labels, spatial_dim=None):
 
-        spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
-        
-        spatial_maps = norm(
-            torch.from_numpy(
-                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
-            ).float()
-        )
+class ViTEstimatorV2(VisionEstimator):
+    def _build_model(
+        self,
+        adata,
+        annot,
+        spatial_dim,
+        mode,
+        max_epochs,
+        batch_size,
+        learning_rate,
+        rotate_maps,
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        ):
 
-        dataset = TensorDataset(
-            spatial_maps.float(), 
-            torch.from_numpy(labels).long()
-        )   
-
-        g = torch.Generator()
-        g.manual_seed(42)
+        train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
+                adata, self.target_gene, self.regulators, 
+                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size,
+                annot=annot, spatial_dim=spatial_dim)
+           
+        model = ViT(self.beta_init, in_channels=self.n_clusters, spatial_dim=spatial_dim, 
+                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads)
+        criterion = nn.MSELoss(reduction='mean')
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         
-        params = {
-            'batch_size': 64,
-            'worker_init_fn': seed_worker,
-            'generator': g
-        }
+        model.to(device)
+        # model = torch.compile(model)
         
-        infer_dataloader = DataLoader(dataset, shuffle=False, **params)
-        
-        beta_list = []
-        
-        for batch_spatial, batch_labels in infer_dataloader:
-            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
-            beta_list.extend(betas.cpu().numpy())
+        losses = []
+        best_model = copy.deepcopy(model)
+        best_score = np.inf
+        best_iter = 0
+    
+        baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
             
-        return np.array(beta_list)
+        with tqdm(range(max_epochs)) as pbar:
+            for epoch in pbar:
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
+                validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+                
+                losses.append(validation_loss)
+
+                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
+            
+                if validation_loss < best_score:
+                    best_score = validation_loss
+                    best_model = copy.deepcopy(model)
+                    best_iter = epoch
+            
+        best_model.eval()
+        
+        print(f'Best model at {best_iter}/{max_epochs}')
+        
+        return best_model, losses
+    
+    def fit(
+        self,
+        annot,
+        init_betas='ols', 
+        max_epochs=100, 
+        learning_rate=0.001, 
+        spatial_dim=64,
+        batch_size=32, 
+        mode='train',
+        rotate_maps=True,
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        ):
+        
+        
+        assert init_betas in ['ones', 'ols']
+        
+        self.spatial_dim = spatial_dim  
+
+        adata = self.adata.copy()
+
+        if init_betas == 'ones':
+            beta_init = torch.ones(len(self.regulators)+1)
+        
+        elif init_betas == 'ols':
+            X = adata.to_df()[self.regulators].values
+            y = adata.to_df()[[self.target_gene]].values
+            ols = LeastSquaredEstimator()
+            ols.fit(X, y)
+            beta_init = ols.get_betas()
+            
+        self.beta_init = np.array(beta_init).reshape(-1, )
+        
+        try:
+            model, losses = self._build_model(
+                adata,
+                annot,
+                spatial_dim=spatial_dim, 
+                mode=mode,
+                max_epochs=max_epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                rotate_maps=rotate_maps,
+                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads
+                )
+            
+            self.model = model  
+            self.losses = losses
+            
+        
+        except KeyboardInterrupt:
+            print('Training interrupted...')
+            pass
+
 
