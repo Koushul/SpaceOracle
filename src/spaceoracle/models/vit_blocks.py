@@ -32,7 +32,7 @@ class ViT(nn.Module):
         
         self.mlp = nn.Linear(self.hidden_d, self.dim)
 
-    def forward(self, images, inputs_x, inputs_labels):
+    def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
         
@@ -47,15 +47,11 @@ class ViT(nn.Module):
         out = out[:, 0]
 
         # Pass through mlp to get betas
-        x = self.mlp(out)
+        betas = self.mlp(out)
+        return betas
         
-        y_pred = x[:, 0]*self.betas[0]
-        for w in range(self.dim-1):
-            y_pred += x[:, w+1]*inputs_x[:, w]*self.betas[w+1]
-
-        return y_pred, x
     
-    def get_att_weights(self, images, inputs_x, inputs_labels):
+    def get_att_weights(self, images):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
         
@@ -68,14 +64,7 @@ class ViT(nn.Module):
             out, att = block.forward_att(out)
             att_weights.append(att)
         
-        # make sure outs are the same as forward 
-        out = out[:, 0]
-        x = self.mlp(out)
-        y_pred = x[:, 0]*self.betas[0]
-        for w in range(self.dim-1):
-            y_pred += x[:, w+1]*inputs_x[:, w]*self.betas[w+1]
-
-        return y_pred, x, att_weights
+        return att_weights
 
     
 
