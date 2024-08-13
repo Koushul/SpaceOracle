@@ -604,7 +604,7 @@ class VisionEstimator(Estimator):
 
         return y_pred
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, scale=1e-2):
+    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, scale=0.01):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -614,7 +614,8 @@ class VisionEstimator(Estimator):
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             if regularize:
-                loss += scale * torch.sum((betas)**2)
+                loss += scale * ( torch.sum((betas)**2) + torch.sum(abs(betas)) )
+                # loss += scale * torch.sum((betas)**2)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -948,3 +949,32 @@ class ViTEstimatorV2(VisionEstimator):
             pass
 
 
+
+
+
+if __name__ == '__main__':
+    import numpy as np
+    from sklearn.datasets import make_regression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_squared_error
+    import matplotlib.pyplot as plt
+    import sys
+    sys.path.append('../src')
+
+    X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
+    X = StandardScaler().fit_transform(X)
+    y = StandardScaler().fit_transform(y.reshape(-1, 1)).reshape(-1, )
+    xy = np.random.rand(1000, 2)
+    c = np.random.randint(0, 13, size=(1000, 1))
+
+
+    estimator = ViTEstimator()
+    print('Fitting...')
+    estimator.fit(X, y, xy, c)
+    print(estimator.get_betas().shape)
+
+
+
+    # y_pred = estimator.predict(X, xy)
+    # print(mean_squared_error(y, y_pred))
