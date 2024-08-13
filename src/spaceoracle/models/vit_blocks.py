@@ -51,7 +51,7 @@ class ViT(nn.Module):
         return betas
         
     
-    def get_att_weights(self, images, inputs_x, inputs_labels):
+    def get_att_weights(self, images):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
         
@@ -64,14 +64,7 @@ class ViT(nn.Module):
             out, att = block.forward_att(out)
             att_weights.append(att)
         
-        # make sure outs are the same as forward 
-        out = out[:, 0]
-        x = self.mlp(out)
-        y_pred = x[:, 0]*self.betas[0]
-        for w in range(self.dim-1):
-            y_pred += x[:, w+1]*inputs_x[:, w]*self.betas[w+1]
-
-        return y_pred, x, att_weights
+        return att_weights
 
     
 
