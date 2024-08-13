@@ -138,7 +138,6 @@ def _build_dataloaders(
     
 
 
-
 class GeoCNNEstimator(Estimator):
     def _training_loop(self, model, dataloader, criterion, optimizer):
         model.train()
@@ -409,6 +408,8 @@ class BetaModel(nn.Module):
 
         return betas
 
+
+
 class VisionEstimator(Estimator):
     def __init__(self, adata, target_gene):
         assert target_gene in adata.var_names
@@ -418,7 +419,6 @@ class VisionEstimator(Estimator):
         self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
         self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
 
-    
     def predict_y(self, model, betas, inputs_x):
         y_pred = betas[:, 0]*model.betas[0]
          
@@ -427,7 +427,7 @@ class VisionEstimator(Estimator):
 
         return y_pred
 
-    def _training_loop(self, model, dataloader, criterion, optimizer):
+    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, scale=1e-2):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -436,6 +436,8 @@ class VisionEstimator(Estimator):
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+            if regularize:
+                loss += scale * torch.sum((betas)**2)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -670,13 +672,13 @@ class ViTEstimatorV2(VisionEstimator):
         batch_size,
         learning_rate,
         rotate_maps,
+        regularize,
         n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
         ):
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
                 adata, self.target_gene, self.regulators, 
-                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size,
-                annot=annot, spatial_dim=spatial_dim)
+                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size, annot=annot, spatial_dim=spatial_dim)
            
         model = ViT(self.beta_init, in_channels=self.n_clusters, spatial_dim=spatial_dim, 
                 n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads)
@@ -695,7 +697,7 @@ class ViTEstimatorV2(VisionEstimator):
             
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
-                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
                 validation_loss = self._validation_loop(model, valid_dataloader, criterion)
                 
                 losses.append(validation_loss)
@@ -722,6 +724,7 @@ class ViTEstimatorV2(VisionEstimator):
         spatial_dim=64,
         batch_size=32, 
         mode='train',
+        regularize=True,
         rotate_maps=True,
         n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
         ):
@@ -755,6 +758,7 @@ class ViTEstimatorV2(VisionEstimator):
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
+                regularize=regularize,
                 n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads
                 )
             
