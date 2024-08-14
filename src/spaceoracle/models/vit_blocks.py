@@ -16,9 +16,6 @@ class ViT(nn.Module):
         self.n_blocks = n_blocks
         self.n_heads = n_heads
         self.hidden_d = hidden_d
-        self.n_seqs = n_patches**2 + 1 
-
-        
         # Input and patches sizes
         assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
         assert chw[2] % n_patches == 0, "Input shape not entirely divisible by number of patches"
@@ -27,9 +24,9 @@ class ViT(nn.Module):
         self.input_d = int(chw[0] * self.patch_size[0] * self.patch_size[1])
         self.linear_mapper = nn.Linear(self.input_d, self.hidden_d)
         
-        self.class_token = nn.Embedding(in_channels, self.hidden_d)  # for cell-type information   
-        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2 + 1, self.hidden_d))
+        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2, self.hidden_d))
         self.pos_embed.requires_grad = False
+        self.label_embed = nn.Embedding(in_channels, self.hidden_d) # for cell-type information
         
         self.blocks = nn.ModuleList([ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
         
@@ -38,19 +35,19 @@ class ViT(nn.Module):
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        tokens = self.linear_mapper(patches)
-        class_token = self.class_token(inputs_labels).unsqueeze(1)
-        
-        tokens = torch.cat((class_token, tokens), dim=1)
-        pos_embed = self.pos_embed.repeat(n, 1, 1)
 
+        tokens = self.linear_mapper(patches)
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
         out = tokens + pos_embed
-        
         for block in self.blocks:
             out = block(out)
-            
-        # Get only the classification token
-        out = out[:, 0]
+
+        # Max pool over patches
+        out = torch.mean(out, dim=1)
+
+        label_embed = self.label_embed(inputs_labels)
+        label_embed = label_embed * 0.1                 # Scale down
+        out = label_embed + out
 
         # Pass through mlp to get betas
         betas = self.mlp(out)
@@ -60,12 +57,9 @@ class ViT(nn.Module):
     def get_att_weights(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        tokens = self.linear_mapper(patches)
-        class_token = self.class_token(inputs_labels).unsqueeze(1)
-        
-        tokens = torch.cat((class_token, tokens), dim=1)
-        pos_embed = self.pos_embed.repeat(n, 1, 1)
 
+        tokens = self.linear_mapper(patches)
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
         out = tokens + pos_embed
         
         att_weights = []   # (n_blocks, batch, n_heads, seqs, seqs) where seqs is flattened patches
