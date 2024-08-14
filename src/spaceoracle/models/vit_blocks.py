@@ -47,7 +47,7 @@ class ViT(nn.Module):
         out = torch.mean(out, dim=1)
 
         label_embed = self.label_embed(inputs_labels)
-        label_embed = torch.softmax(label_embed, dim=-1) # Scale down
+        label_embed = label_embed * 0.1                 # Scale down
         out = label_embed + out
 
         # Pass through mlp to get betas
