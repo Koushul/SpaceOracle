@@ -604,7 +604,7 @@ class VisionEstimator(Estimator):
 
         return y_pred
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, scale=0.01):
+    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, lambd=0.01, a=0.5):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -614,7 +614,7 @@ class VisionEstimator(Estimator):
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             if regularize:
-                loss += scale * ( torch.sum((betas)**2) + torch.sum(abs(betas)) )
+                loss += lambd * (a*torch.sum((betas)**2) + ((1-a)/2)*torch.sum(abs(betas)) )
                 # loss += scale * torch.sum((betas)**2)
             loss.backward()
             optimizer.step()
