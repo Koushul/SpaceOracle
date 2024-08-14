@@ -11,7 +11,7 @@ from ..models.estimators import GeoCNNEstimatorV2
 # python -m spaceoracle.tools.sweep_cnn
 
 sweep_config = {
-    "name": "sweep",
+    "name": "cnnsweep",
     "method": "random",
     "metric": {
         "goal": "minimize", 
@@ -106,7 +106,7 @@ def ugly_adata_preprocess():
 
 if __name__ == '__main__':
     
-    # sweep_id = wandb.sweep(sweep=sweep_config, project="SpaceOracle")
+    # sweep_id = wandb.sweep(sweep=sweep_config, project="cnn")
     # wandb.agent(sweep_id, function=start_sweep, count=5)
     
-    wandb.agent("alw399/SpaceOracle/q9z17eqv", function=start_sweep, count=5)
+    wandb.agent("SpaceTeam/cnn/oicpx2at", function=start_sweep, count=50)

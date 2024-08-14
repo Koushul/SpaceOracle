@@ -11,7 +11,7 @@ from ..models.estimators import ViTEstimatorV2
 # python -m spaceoracle.tools.sweep_vit
 
 sweep_config = {
-    "name": "sweep",
+    "name": "vitsweep",
     "method": "random",
     "metric": {
         "goal": "minimize", 
@@ -113,7 +113,7 @@ def ugly_adata_preprocess():
 
 
 if __name__ == '__main__':
-    # sweep_id = wandb.sweep(sweep=sweep_config, project="SpaceOracle")
+    # sweep_id = wandb.sweep(sweep=sweep_config, project="vit")
     # wandb.agent(sweep_id, function=start_sweep, count=15)
 
-    wandb.agent("alw399/SpaceOracle/bam0il36", function=start_sweep, count=5)
+    wandb.agent("SpaceTeam/vit/zvu2czlc", function=start_sweep, count=40)

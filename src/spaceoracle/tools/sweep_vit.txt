@@ -1,25 +1,24 @@
-wandb: Agent Starting Run: uafuw6cp with config:
-wandb: 	a: 0.7290675620997378
-wandb: 	batch_size: 16
-wandb: 	beta_init: ones
+wandb: Agent Starting Run: coccsigh with config:
+wandb: 	a: 0.5011260074008997
+wandb: 	batch_size: 64
+wandb: 	beta_init: ols
 wandb: 	epochs: 30
-wandb: 	hidden_d: 32
-wandb: 	lambd: 0.17177353977014662
-wandb: 	lr: 0.09029388264014378
-wandb: 	n_blocks: 3
-wandb: 	n_heads: 8
-wandb: 	n_patches: 32
-wandb: 	regularize: True
-wandb: 	rotate_maps: True
+wandb: 	hidden_d: 16
+wandb: 	lambd: 0.4907475341860216
+wandb: 	lr: 0.043837996781394245
+wandb: 	n_blocks: 4
+wandb: 	n_heads: 4
+wandb: 	n_patches: 8
+wandb: 	regularize: False
+wandb: 	rotate_maps: False
 wandb: 	spatial_dim: 256
-wandb: Currently logged in as: alw399. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: alw399 (SpaceTeam). Use `wandb login --relogin` to force relogin
 wandb: wandb version 0.17.6 is available!  To upgrade, please run:
 wandb:  $ pip install wandb --upgrade
 wandb: Tracking run with wandb version 0.16.6
-wandb: Run data is saved locally in /ihome/djishnu/alw399/SpaceOracle/src/wandb/run-20240814_122003-uafuw6cp
+wandb: Run data is saved locally in /ihome/djishnu/alw399/SpaceOracle/src/wandb/run-20240814_130701-coccsigh
 wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run vocal-sweep-4
-wandb: ⭐️ View project at https://wandb.ai/alw399/SpaceOracle
-wandb: 🧹 View sweep at https://wandb.ai/alw399/SpaceOracle/sweeps/bam0il36
-wandb: 🚀 View run at https://wandb.ai/alw399/SpaceOracle/runs/uafuw6cp
-  0%|          | 0/30 [00:00<?, ?it/s][cuda] MSE: 0.7116 | Baseline: 1.6558:   0%|          | 0/30 [01:04<?, ?it/s][cuda] MSE: 0.7116 | Baseline: 1.6558:   3%|▎         | 1/30 [01:04<31:01, 64.20s/it]
+wandb: Syncing run lucky-sweep-2
+wandb: ⭐️ View project at https://wandb.ai/SpaceTeam/vit
+wandb: 🧹 View sweep at https://wandb.ai/SpaceTeam/vit/sweeps/zvu2czlc
+wandb: 🚀 View run at https://wandb.ai/SpaceTeam/vit/runs/coccsigh
