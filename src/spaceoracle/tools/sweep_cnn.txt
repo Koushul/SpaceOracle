@@ -1,0 +1,48 @@
+wandb: Agent Starting Run: 87fqppgr with config:
+wandb: 	a: 0.26826840514937456
+wandb: 	batch_size: 16
+wandb: 	beta_init: ones
+wandb: 	epochs: 15
+wandb: 	lambd: 0.2793689456258174
+wandb: 	lr: 0.0008494754105364242
+wandb: 	regularize: False
+wandb: 	rotate_maps: True
+wandb: 	spatial_dim: 64
+wandb: Currently logged in as: alw399. Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.17.6 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.16.6
+wandb: Run data is saved locally in /ihome/djishnu/alw399/SpaceOracle/src/wandb/run-20240814_122413-87fqppgr
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run scarlet-sweep-2
+wandb: ⭐️ View project at https://wandb.ai/alw399/SpaceOracle
+wandb: 🧹 View sweep at https://wandb.ai/alw399/SpaceOracle/sweeps/q9z17eqv
+wandb: 🚀 View run at https://wandb.ai/alw399/SpaceOracle/runs/87fqppgr
+  0%|          | 0/15 [00:00<?, ?it/s][cuda] MSE: 0.4207 | Baseline: 1.6558:   0%|          | 0/15 [00:04<?, ?it/s][cuda] MSE: 0.4207 | Baseline: 1.6558:   7%|▋         | 1/15 [00:04<00:56,  4.01s/it][cuda] MSE: 0.4201 | Baseline: 1.6558:   7%|▋         | 1/15 [00:06<00:56,  4.01s/it][cuda] MSE: 0.4201 | Baseline: 1.6558:  13%|█▎        | 2/15 [00:06<00:38,  2.96s/it][cuda] MSE: 0.4260 | Baseline: 1.6558:  13%|█▎        | 2/15 [00:08<00:38,  2.96s/it][cuda] MSE: 0.4260 | Baseline: 1.6558:  20%|██        | 3/15 [00:08<00:31,  2.61s/it][cuda] MSE: 0.4244 | Baseline: 1.6558:  20%|██        | 3/15 [00:10<00:31,  2.61s/it][cuda] MSE: 0.4244 | Baseline: 1.6558:  27%|██▋       | 4/15 [00:10<00:26,  2.44s/it][cuda] MSE: 0.4228 | Baseline: 1.6558:  27%|██▋       | 4/15 [00:12<00:26,  2.44s/it][cuda] MSE: 0.4228 | Baseline: 1.6558:  33%|███▎      | 5/15 [00:12<00:23,  2.35s/it][cuda] MSE: 0.4232 | Baseline: 1.6558:  33%|███▎      | 5/15 [00:14<00:23,  2.35s/it][cuda] MSE: 0.4232 | Baseline: 1.6558:  40%|████      | 6/15 [00:14<00:20,  2.30s/it][cuda] MSE: 0.4118 | Baseline: 1.6558:  40%|████      | 6/15 [00:17<00:20,  2.30s/it][cuda] MSE: 0.4118 | Baseline: 1.6558:  47%|████▋     | 7/15 [00:17<00:18,  2.26s/it][cuda] MSE: 0.4031 | Baseline: 1.6558:  47%|████▋     | 7/15 [00:19<00:18,  2.26s/it][cuda] MSE: 0.4031 | Baseline: 1.6558:  53%|█████▎    | 8/15 [00:19<00:15,  2.24s/it][cuda] MSE: 0.3951 | Baseline: 1.6558:  53%|█████▎    | 8/15 [00:21<00:15,  2.24s/it][cuda] MSE: 0.3951 | Baseline: 1.6558:  60%|██████    | 9/15 [00:21<00:13,  2.23s/it][cuda] MSE: 0.3883 | Baseline: 1.6558:  60%|██████    | 9/15 [00:23<00:13,  2.23s/it][cuda] MSE: 0.3883 | Baseline: 1.6558:  67%|██████▋   | 10/15 [00:23<00:11,  2.22s/it][cuda] MSE: 0.3827 | Baseline: 1.6558:  67%|██████▋   | 10/15 [00:25<00:11,  2.22s/it][cuda] MSE: 0.3827 | Baseline: 1.6558:  73%|███████▎  | 11/15 [00:25<00:08,  2.21s/it][cuda] MSE: 0.3783 | Baseline: 1.6558:  73%|███████▎  | 11/15 [00:28<00:08,  2.21s/it][cuda] MSE: 0.3783 | Baseline: 1.6558:  80%|████████  | 12/15 [00:28<00:06,  2.21s/it][cuda] MSE: 0.3744 | Baseline: 1.6558:  80%|████████  | 12/15 [00:30<00:06,  2.21s/it][cuda] MSE: 0.3744 | Baseline: 1.6558:  87%|████████▋ | 13/15 [00:30<00:04,  2.20s/it][cuda] MSE: 0.3706 | Baseline: 1.6558:  87%|████████▋ | 13/15 [00:32<00:04,  2.20s/it][cuda] MSE: 0.3706 | Baseline: 1.6558:  93%|█████████▎| 14/15 [00:32<00:02,  2.20s/it][cuda] MSE: 0.3672 | Baseline: 1.6558:  93%|█████████▎| 14/15 [00:34<00:02,  2.20s/it][cuda] MSE: 0.3672 | Baseline: 1.6558: 100%|██████████| 15/15 [00:34<00:00,  2.20s/it][cuda] MSE: 0.3672 | Baseline: 1.6558: 100%|██████████| 15/15 [00:34<00:00,  2.32s/it]
+wandb: - 0.007 MB of 0.007 MB uploadedwandb: \ 0.007 MB of 0.007 MB uploadedwandb: | 0.017 MB of 0.017 MB uploadedwandb:                                                                                
+wandb: 
+wandb: Run history:
+wandb:   training_loss █▆▅▅▅▅▄▂▂▁▁▁▁▁▁
+wandb: validation_loss ▇▇█▇▇▇▂▂▂▁▁▂▁▁▁
+wandb: 
+wandb: Run summary:
+wandb:   training_loss 0.3247
+wandb: validation_loss 0.32069
+wandb: 
+wandb: 🚀 View run scarlet-sweep-2 at: https://wandb.ai/alw399/SpaceOracle/runs/87fqppgr
+wandb: ⭐️ View project at: https://wandb.ai/alw399/SpaceOracle
+wandb: Synced 6 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20240814_122413-87fqppgr/logs
+wandb: Agent Starting Run: wpbuselq with config:
+wandb: 	a: 0.8655102232337739
+wandb: 	batch_size: 64
+wandb: 	beta_init: ols
+wandb: 	epochs: 30
+wandb: 	lambd: 0.12371829572791136
+wandb: 	lr: 0.06041045501713618
+wandb: 	regularize: False
+wandb: 	rotate_maps: True
+wandb: 	spatial_dim: 32
+Numba: Attempted to fork from a non-main thread, the TBB library may be in an invalid state in the child process.
+Numba: Attempted to fork from a non-main thread, the TBB library may be in an invalid state in the child process.
+Numba: Attempted to fork from a non-main thread, the TBB library may be in an invalid state in the child process.

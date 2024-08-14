@@ -6,6 +6,7 @@ from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
 import copy
 from tqdm import tqdm 
+import wandb
 
 import torch
 import torch.nn as nn
@@ -604,7 +605,7 @@ class VisionEstimator(Estimator):
 
         return y_pred
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, lambd=0.05, a=0.9):
+    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, lambd=0.01, a=0.9):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -743,7 +744,9 @@ class GeoCNNEstimatorV2(VisionEstimator):
         max_epochs,
         batch_size, 
         learning_rate,
-        rotate_maps
+        rotate_maps,
+        regularize, lambd, a,
+        use_wandb
         ):
 
 
@@ -768,10 +771,12 @@ class GeoCNNEstimatorV2(VisionEstimator):
             
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
-                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize, lambd=lambd, a=a)
                 validation_loss = self._validation_loop(model, valid_dataloader, criterion)
                 
                 losses.append(validation_loss)
+                if use_wandb:
+                    wandb.log({'training_loss': training_loss, 'validation_loss': validation_loss})
 
                 pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
             
@@ -795,7 +800,10 @@ class GeoCNNEstimatorV2(VisionEstimator):
         spatial_dim=64,
         batch_size=32, 
         mode='train',
-        rotate_maps=True
+        rotate_maps=True,
+        regularize=False,
+        lambd=0.01, a=0.5,
+        use_wandb=False
         ):
         
         
@@ -826,7 +834,9 @@ class GeoCNNEstimatorV2(VisionEstimator):
                 max_epochs=max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
-                rotate_maps=rotate_maps
+                rotate_maps=rotate_maps,
+                regularize=regularize, lambd=lambd, a=a,
+                use_wandb=use_wandb
             ) 
             
             self.model = model  
@@ -851,7 +861,8 @@ class ViTEstimatorV2(VisionEstimator):
         learning_rate,
         rotate_maps,
         regularize,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        n_patches, n_blocks, hidden_d, n_heads,
+        lambd, a, use_wandb
         ):
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
@@ -875,8 +886,11 @@ class ViTEstimatorV2(VisionEstimator):
             
         with tqdm(range(max_epochs)) as pbar:
             for epoch in pbar:
-                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize, lambd=lambd, a=a)
                 validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+
+                if use_wandb:
+                    wandb.log({'training_loss': training_loss, 'validation_loss': validation_loss})
                 
                 losses.append(validation_loss)
 
@@ -904,7 +918,9 @@ class ViTEstimatorV2(VisionEstimator):
         mode='train',
         regularize=True,
         rotate_maps=True,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
+        lambd=0.01, a=0.5,
+        use_wandb=False
         ):
         
         
@@ -937,7 +953,9 @@ class ViTEstimatorV2(VisionEstimator):
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
                 regularize=regularize,
-                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads
+                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads,
+                lambd=lambd, a=a, 
+                use_wandb=use_wandb
                 )
             
             self.model = model  
