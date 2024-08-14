@@ -254,116 +254,6 @@ def _build_dataloaders(
         return train_dataloader, valid_dataloader
 
 
-class GeoCNNEstimator(Estimator):
-    def _training_loop(self, model, dataloader, criterion, optimizer):
-        model.train()
-        total_loss = 0
-        for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
-            optimizer.zero_grad()
-            outputs, _ = model(
-                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
-            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-                    
-        return total_loss / len(dataloader)
-    
-    
-    @torch.no_grad()
-    def _validation_loop(self, model, dataloader, criterion):
-        model.eval()
-        total_loss = 0
-        for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
-            outputs, _ = model(
-                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
-            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-            total_loss += loss.item()
-        
-        model.to(device)
-
-        losses = []
-        best_model = copy.deepcopy(model)
-        best_score = np.inf
-        best_iter = 0
-        
-        train_dataloader, valid_dataloader = self._build_dataloaders(
-            X, y, xy, labels, spatial_dim, mode=mode)
-    
-        baseline_loss = self._estimate_baseline(valid_dataloader, beta_init)
-            
-        with tqdm(range(max_epochs)) as pbar:
-            for epoch in pbar:
-                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
-                validation_loss = self._validation_loop(model, valid_dataloader, criterion)
-                
-                losses.append(validation_loss)
-
-                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
-            
-                if np.mean(losses) < best_score:
-                    best_model = copy.deepcopy(model)
-                    best_iter = epoch
-            
-        best_model.eval()
-        
-        return best_model, losses
-    
-    def fit(self, 
-        X, y, xy, 
-        labels,
-        init_betas='ols', 
-        max_epochs=100, 
-        learning_rate=0.001, 
-        spatial_dim=64, 
-        init=0.1,
-        mode='train'
-        ):
-
-        in_channels = len(np.unique(labels))
-        
-        assert init_betas in ['ones', 'ols', 'random']
-        assert X.shape[0] == y.shape[0] == xy.shape[0]
-        
-        
-        if init_betas == 'ones':
-            beta_init = torch.ones(X.shape[1]+1)
-        
-        elif init_betas == 'ols':
-            ols = LeastSquaredEstimator()
-            ols.fit(X, y)
-            beta_init = ols.get_betas()
-            
-        elif init_betas == 'random':
-            beta_init = torch.randn(X.shape[1]+1)
-            
-        self.beta_init = np.array(beta_init).reshape(-1, )
-        
-        
-        try:
-            model, losses = self._build_model(
-                X, y, xy,
-                labels,
-                self.beta_init, 
-                in_channels=in_channels, 
-                spatial_dim=spatial_dim, 
-                max_epochs=max_epochs,
-                learning_rate=learning_rate,
-                mode=mode,
-            ) 
-            
-            self.model = model  
-            
-        
-        except KeyboardInterrupt:
-            print('Training interrupted...')
-            pass
-        
-        self.losses = losses
-    
-    
-
-    
 class GeoCNNEstimator(VisionEstimator):
         
     def _build_cnn(
@@ -613,7 +503,7 @@ class VisionEstimator(Estimator):
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-            if regularize:
+            if regularize: ##TODO: make this work more consistently
                 loss += lambd * ((a*torch.sum((betas)**2) + ((1-a)/2)*torch.sum(abs(betas)) ))
                 # loss += scale * torch.sum((betas)**2)
             loss.backward()
@@ -947,34 +837,3 @@ class ViTEstimatorV2(VisionEstimator):
         except KeyboardInterrupt:
             print('Training interrupted...')
             pass
-
-
-
-
-
-if __name__ == '__main__':
-    import numpy as np
-    from sklearn.datasets import make_regression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import mean_squared_error
-    import matplotlib.pyplot as plt
-    import sys
-    sys.path.append('../src')
-
-    X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
-    X = StandardScaler().fit_transform(X)
-    y = StandardScaler().fit_transform(y.reshape(-1, 1)).reshape(-1, )
-    xy = np.random.rand(1000, 2)
-    c = np.random.randint(0, 13, size=(1000, 1))
-
-
-    estimator = ViTEstimator()
-    print('Fitting...')
-    estimator.fit(X, y, xy, c)
-    print(estimator.get_betas().shape)
-
-
-
-    # y_pred = estimator.predict(X, xy)
-    # print(mean_squared_error(y, y_pred))
