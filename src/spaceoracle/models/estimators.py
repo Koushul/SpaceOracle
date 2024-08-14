@@ -44,6 +44,124 @@ class Estimator(ABC):
     @abstractmethod
     def get_betas(self):
         pass
+
+class VisionEstimator(Estimator):
+    
+    @torch.no_grad()
+    def get_betas(self, X, xy, labels, spatial_dim):
+        infer_dataloader = self._build_dataloaders(
+            X=X, y=None, xy=xy, labels=labels, spatial_dim=spatial_dim, mode='infer')
+        
+        beta_list = []
+        y_pred = []
+        
+        for batch_spatial, batch_x, batch_labels in infer_dataloader:
+            outputs, betas = self.model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            beta_list.extend(betas.cpu().numpy())
+            y_pred.extend(outputs.cpu().numpy())
+            
+        return np.array(beta_list), np.array(y_pred)
+
+    
+    def _build_dataloaders(
+        self,
+        X, y, xy,
+        labels, 
+        spatial_dim, 
+        mode='train', 
+        batch_size=32, 
+        test_size=0.2
+        ):
+        
+        assert mode in ['train', 'infer', 'train_test']
+        
+        spatial_maps = norm(
+            torch.from_numpy(
+                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
+            ).float()
+        )
+        
+        if mode == 'infer':
+            dataset = TensorDataset(
+                spatial_maps.float(), 
+                torch.from_numpy(X).float(),
+                torch.from_numpy(labels).long()
+            )   
+            
+            return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        
+        # otherwise
+        
+        dataset = TensorDataset(
+            spatial_maps.float(), 
+            torch.from_numpy(X).float(),
+            torch.from_numpy(y).float(),
+            torch.from_numpy(labels).long()
+        )  
+        
+        if mode == 'train':
+            train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            valid_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+            
+            return train_dataloader, valid_dataloader
+        
+        if mode == 'train_test':
+            split = int((1-test_size)*len(dataset))
+            generator = torch.Generator().manual_seed(42)
+            train_dataset, valid_dataset = random_split(
+                dataset, [split, len(dataset)-split], generator=generator)
+            train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
+
+            return train_dataloader, valid_dataloader
+    
+    
+    def _estimate_baseline(self, dataloader, beta_init):
+        total_linear_err = 0
+        for _, batch_x, batch_y, _ in dataloader:
+            _x = batch_x.cpu().numpy()
+            _y = batch_y.cpu().numpy()
+            
+            ols_pred = beta_init[0].item()
+            
+            for w in range(len(beta_init)-1):
+                # print(ols_pred.shape, _x.shape, _x[:, w].shape , beta_init[w+1].shape )
+
+                ols_pred += _x[:, w] * beta_init[w+1].item()
+                
+            ols_err = np.mean((_y - ols_pred)**2)
+            
+            total_linear_err += ols_err
+            
+        return total_linear_err / len(dataloader)
+    
+    def _training_loop(self, model, dataloader, criterion, optimizer):
+        model.train()
+        total_loss = 0
+        for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
+            optimizer.zero_grad()
+            outputs, _ = model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+                    
+        return total_loss / len(dataloader)
+    
+    
+    @torch.no_grad()
+    def _validation_loop(self, model, dataloader, criterion):
+        model.eval()
+        total_loss = 0
+        for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
+            outputs, _ = model(
+                batch_spatial.to(device), batch_x.to(device), batch_labels.to(device))
+            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+            total_loss += loss.item()
+        
+        return total_loss / len(dataloader)
     
     
 class LeastSquaredEstimator(Estimator):
@@ -134,8 +252,6 @@ def _build_dataloaders(
         valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
 
         return train_dataloader, valid_dataloader
-    
-    
 
 
 class GeoCNNEstimator(Estimator):
@@ -164,29 +280,92 @@ class GeoCNNEstimator(Estimator):
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             total_loss += loss.item()
         
-        return total_loss / len(dataloader)
-    
-    
-    def _estimate_baseline(self, dataloader, beta_init):
-        total_linear_err = 0
-        torch.manual_seed(42)
-        for _, batch_x, batch_y, _ in dataloader:
-            _x = batch_x.cpu().numpy()
-            _y = batch_y.cpu().numpy()
-            
-            ols_pred = beta_init[0]
-            
-            for w in range(len(beta_init)-1):
-                ols_pred += _x[:, w]*beta_init[w+1]
-                
-            ols_err = np.mean((_y - ols_pred)**2)
-            
-            total_linear_err += ols_err
-            
-        return total_linear_err / len(dataloader)
+        model.to(device)
+
+        losses = []
+        best_model = copy.deepcopy(model)
+        best_score = np.inf
+        best_iter = 0
         
+        train_dataloader, valid_dataloader = self._build_dataloaders(
+            X, y, xy, labels, spatial_dim, mode=mode)
     
+        baseline_loss = self._estimate_baseline(valid_dataloader, beta_init)
             
+        with tqdm(range(max_epochs)) as pbar:
+            for epoch in pbar:
+                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer)
+                validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+                
+                losses.append(validation_loss)
+
+                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
+            
+                if np.mean(losses) < best_score:
+                    best_model = copy.deepcopy(model)
+                    best_iter = epoch
+            
+        best_model.eval()
+        
+        return best_model, losses
+    
+    def fit(self, 
+        X, y, xy, 
+        labels,
+        init_betas='ols', 
+        max_epochs=100, 
+        learning_rate=0.001, 
+        spatial_dim=64, 
+        init=0.1,
+        mode='train'
+        ):
+
+        in_channels = len(np.unique(labels))
+        
+        assert init_betas in ['ones', 'ols', 'random']
+        assert X.shape[0] == y.shape[0] == xy.shape[0]
+        
+        
+        if init_betas == 'ones':
+            beta_init = torch.ones(X.shape[1]+1)
+        
+        elif init_betas == 'ols':
+            ols = LeastSquaredEstimator()
+            ols.fit(X, y)
+            beta_init = ols.get_betas()
+            
+        elif init_betas == 'random':
+            beta_init = torch.randn(X.shape[1]+1)
+            
+        self.beta_init = np.array(beta_init).reshape(-1, )
+        
+        
+        try:
+            model, losses = self._build_model(
+                X, y, xy,
+                labels,
+                self.beta_init, 
+                in_channels=in_channels, 
+                spatial_dim=spatial_dim, 
+                max_epochs=max_epochs,
+                learning_rate=learning_rate,
+                mode=mode,
+            ) 
+            
+            self.model = model  
+            
+        
+        except KeyboardInterrupt:
+            print('Training interrupted...')
+            pass
+        
+        self.losses = losses
+    
+    
+
+    
+class GeoCNNEstimator(VisionEstimator):
+        
     def _build_cnn(
         self, 
         X, y, xy, 
@@ -199,7 +378,6 @@ class GeoCNNEstimator(Estimator):
         max_epochs, 
         learning_rate
         ):
-        
         
            
         model = GCNNWR(beta_init, in_channels=in_channels, init=init)
@@ -252,7 +430,6 @@ class GeoCNNEstimator(Estimator):
         init=0.1,
         mode='train'
         ):
-        
         
         assert init_betas in ['ones', 'ols', 'random']
         assert X.shape[0] == y.shape[0] == xy.shape[0]
@@ -427,7 +604,7 @@ class VisionEstimator(Estimator):
 
         return y_pred
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, scale=1e-2):
+    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, lambd=0.05, a=0.9):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -437,7 +614,8 @@ class VisionEstimator(Estimator):
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             if regularize:
-                loss += scale * torch.sum((betas)**2)
+                loss += lambd * ((a*torch.sum((betas)**2) + ((1-a)/2)*torch.sum(abs(betas)) ))
+                # loss += scale * torch.sum((betas)**2)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -771,3 +949,32 @@ class ViTEstimatorV2(VisionEstimator):
             pass
 
 
+
+
+
+if __name__ == '__main__':
+    import numpy as np
+    from sklearn.datasets import make_regression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_squared_error
+    import matplotlib.pyplot as plt
+    import sys
+    sys.path.append('../src')
+
+    X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
+    X = StandardScaler().fit_transform(X)
+    y = StandardScaler().fit_transform(y.reshape(-1, 1)).reshape(-1, )
+    xy = np.random.rand(1000, 2)
+    c = np.random.randint(0, 13, size=(1000, 1))
+
+
+    estimator = ViTEstimator()
+    print('Fitting...')
+    estimator.fit(X, y, xy, c)
+    print(estimator.get_betas().shape)
+
+
+
+    # y_pred = estimator.predict(X, xy)
+    # print(mean_squared_error(y, y_pred))
