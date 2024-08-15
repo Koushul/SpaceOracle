@@ -7,6 +7,9 @@ import numpy as np
 import anndata
 import torch
 from spaceoracle.tools.data import SpaceOracleDataset, SpatialDataset
+from spaceoracle.models.estimators import ViTEstimatorV2
+from torch.utils.data import DataLoader
+
 
 class TestSpaceOracleDataset(unittest.TestCase):
 
@@ -42,6 +45,23 @@ class TestSpaceOracleDataset(unittest.TestCase):
         self.assertEqual(target_gene_exp.shape, (1,))
         self.assertEqual(cluster_info.shape, ())
 
+    def test_build_dataloaders_from_adata(self):
+        
+        # Set up test parameters
+        target_gene = 'gene_0'
+        regulators = ['gene_1', 'gene_2', 'gene_3']
+        batch_size = 16
+        spatial_dim = 32
+        
+        # Test train mode
+        train_loader, valid_loader = ViTEstimatorV2._build_dataloaders_from_adata(
+            self.adata, target_gene, regulators, batch_size=batch_size, 
+            mode='train', spatial_dim=spatial_dim
+        )
+        
+        assert isinstance(train_loader, DataLoader)
+        assert isinstance(valid_loader, DataLoader)
+        assert len(train_loader.dataset) == len(valid_loader.dataset) == len(self.adata)
 
 
 
