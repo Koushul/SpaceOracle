@@ -827,8 +827,11 @@ class ViTEstimatorV2(VisionEstimator):
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
                 regularize=regularize,
-                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads
-                )
+                n_patches=n_patches, 
+                n_blocks=n_blocks, 
+                hidden_d=hidden_d, 
+                n_heads=n_heads
+            )
             
             self.model = model  
             self.losses = losses
