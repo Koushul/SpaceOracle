@@ -234,7 +234,6 @@ class BetaModel(nn.Module):
         return betas
 
 class VisionEstimator(Estimator):
-    @deprecated('Please use VisionEstimatorV2 instead.')
     def __init__(self, adata, target_gene):
         assert target_gene in adata.var_names
         self.adata = adata
@@ -577,7 +576,7 @@ class ViTEstimatorV2(VisionEstimator):
     def fit(
         self,
         annot,
-        init_betas='ols', 
+        init_betas='co', 
         max_epochs=100, 
         learning_rate=0.001, 
         spatial_dim=64,
@@ -589,7 +588,7 @@ class ViTEstimatorV2(VisionEstimator):
         ):
         
         
-        assert init_betas in ['ones', 'ols']
+        assert init_betas in ['ones', 'ols', 'co']
         
         self.spatial_dim = spatial_dim  
 
@@ -604,6 +603,11 @@ class ViTEstimatorV2(VisionEstimator):
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
             beta_init = ols.get_betas()
+
+        elif init_betas == 'co':
+            co_coefs = self.grn.get_regulators_with_pvalues(adata, 'Cd74').groupby('source').mean()
+            co_coefs = co_coefs.loc[self.regulators]
+            beta_init = np.array(co_coefs.values)
             
         self.beta_init = np.array(beta_init).reshape(-1, )
         
