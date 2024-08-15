@@ -113,27 +113,18 @@ class MSA(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, sequences):
-        # Sequences has shape (N, seq_length, token_dim)
-        # We go into shape    (N, seq_length, n_heads, token_dim / n_heads)
-        # And come back to    (N, seq_length, item_dim)  (through concatenation)
-        result = []
-        for sequence in sequences:
-            seq_result = []
-            for head in range(self.n_heads):
-                q_mapping = self.q_mappings[head]
-                k_mapping = self.k_mappings[head]
-                v_mapping = self.v_mappings[head]
+        N, seq_length, token_dim = sequences.shape
+        sequences = sequences.view(N, seq_length, self.n_heads, self.d_head)
+        q = torch.stack([q_map(sequences[:,:,i,:]) for i, q_map in enumerate(self.q_mappings)], dim=2)
+        k = torch.stack([k_map(sequences[:,:,i,:]) for i, k_map in enumerate(self.k_mappings)], dim=2)
+        v = torch.stack([v_map(sequences[:,:,i,:]) for i, v_map in enumerate(self.v_mappings)], dim=2)
 
-                seq = sequence[:, head * self.d_head: (head + 1) * self.d_head]
-                q, k, v = q_mapping(seq), k_mapping(seq), v_mapping(seq)
-
-                # attention = self.softmax(q @ k.T / (self.d_head ** 0.5))
-                # att_out = attention @ v
-                att_out = F.scaled_dot_product_attention(q,k,v)
-
-                seq_result.append(att_out)
-            result.append(torch.hstack(seq_result))
-        return torch.cat([torch.unsqueeze(r, dim=0) for r in result])
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        
+        output = F.scaled_dot_product_attention(q, k, v)
+        return output.transpose(1, 2).contiguous().view(N, seq_length, -1)
     
     def forward_att(self, sequences):
         atts = []
