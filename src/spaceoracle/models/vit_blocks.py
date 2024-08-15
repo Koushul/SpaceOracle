@@ -36,7 +36,17 @@ class ViT(nn.Module):
         
         self.blocks = nn.ModuleList([ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
         
-        self.mlp = nn.Linear(self.hidden_d, self.dim)
+        # self.mlp = nn.Linear(self.hidden_d, self.dim)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.hidden_d, 32),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(32, 16),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(16, self.dim)
+        )
 
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
@@ -152,31 +162,50 @@ class MSA(nn.Module):
         output = F.scaled_dot_product_attention(q, k, v)
         return output.transpose(1, 2).contiguous().view(N, seq_length, -1)
     
-    def forward_att(self, sequences):
-        result = []
-        atts = []
+    # def forward_att(self, sequences):
+    #     result = []
+    #     atts = []
 
-        for sequence in sequences:
-            seq_result = []
-            att_result = []
+    #     for sequence in sequences:
+    #         seq_result = []
+    #         att_result = []
 
-            for head in range(self.n_heads):
-                q_mapping = self.q_mappings[head]
-                k_mapping = self.k_mappings[head]
-                v_mapping = self.v_mappings[head]
+    #         for head in range(self.n_heads):
+    #             q_mapping = self.q_mappings[head]
+    #             k_mapping = self.k_mappings[head]
+    #             v_mapping = self.v_mappings[head]
 
-                seq = sequence[:, head * self.d_head: (head + 1) * self.d_head]
-                q, k, v = q_mapping(seq), k_mapping(seq), v_mapping(seq)
+    #             seq = sequence[:, head * self.d_head: (head + 1) * self.d_head]
+    #             q, k, v = q_mapping(seq), k_mapping(seq), v_mapping(seq)
 
-                attention = self.softmax(q @ k.T / (self.d_head ** 0.5))
-                seq_result.append(attention @ v)
-                att_result.append(attention) 
+    #             attention = self.softmax(q @ k.T / (self.d_head ** 0.5))
+    #             seq_result.append(attention @ v)
+    #             att_result.append(attention) 
             
-            atts.append(torch.stack(att_result, dim=0))
-            result.append(torch.hstack(seq_result))
+    #         atts.append(torch.stack(att_result, dim=0))
+    #         result.append(torch.hstack(seq_result))
 
-        outs = torch.cat([torch.unsqueeze(r, dim=0) for r in result])
+    #     outs = torch.cat([torch.unsqueeze(r, dim=0) for r in result])
 
+    #     return outs, atts
+
+    def forward_att(self, sequences):
+        N, seq_length, token_dim = sequences.shape
+        sequences = sequences.view(N, seq_length, self.n_heads, self.d_head)
+        
+        q = torch.stack([q_map(sequences[:,:,i,:]) for i, q_map in enumerate(self.q_mappings)], dim=2)
+        k = torch.stack([k_map(sequences[:,:,i,:]) for i, k_map in enumerate(self.k_mappings)], dim=2)
+        v = torch.stack([v_map(sequences[:,:,i,:]) for i, v_map in enumerate(self.v_mappings)], dim=2)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        
+        attention = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+        
+        outs = attention.transpose(1, 2).contiguous().view(N, seq_length, -1)
+        atts = attention.softmax(dim=-1)  # Extract attention weights
+        
         return outs, atts
 
 

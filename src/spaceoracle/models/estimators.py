@@ -590,6 +590,28 @@ class VisionEstimator(Estimator):
         
     @torch.no_grad()
     def get_betas(self, xy, labels, spatial_dim=None):
+        """
+        Get beta values for the given spatial coordinates and labels.
+
+        This method processes the input spatial data and labels through the trained model
+        to obtain beta values, which represent the importance of each regulator for the target gene.
+
+        Parameters:
+        -----------
+        xy : numpy.ndarray
+            Array of shape (n_samples, 2) containing spatial coordinates.
+        labels : numpy.ndarray
+            Array of shape (n_samples,) containing cell type or cluster labels.
+        spatial_dim : int, optional
+            Dimension of the spatial map. If None, uses the spatial dimension used to train the model.
+
+        Returns:
+        --------
+        numpy.ndarray
+            Array of shape (n_samples, n_regulators) containing beta values for each sample and regulator.
+
+
+        """
 
         spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
         
@@ -748,8 +770,16 @@ class ViTEstimatorV2(VisionEstimator):
                 adata, self.target_gene, self.regulators, 
                 mode=mode, rotate_maps=rotate_maps, batch_size=batch_size, annot=annot, spatial_dim=spatial_dim)
            
-        model = ViT(self.beta_init, in_channels=self.n_clusters, spatial_dim=spatial_dim, 
-                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads)
+        model = ViT(
+            self.beta_init, 
+            in_channels=self.n_clusters, 
+            spatial_dim=spatial_dim, 
+            n_patches=n_patches, 
+            n_blocks=n_blocks, 
+            hidden_d=hidden_d, 
+            n_heads=n_heads
+        )
+        
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         
