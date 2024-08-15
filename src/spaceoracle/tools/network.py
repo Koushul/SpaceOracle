@@ -1,6 +1,8 @@
 # import celloracle as co
 import numpy as np
 import pandas as pd
+import pickle
+import os
 
 class GeneRegulatoryNetwork:
     def __init__(self, organism='mouse'):
@@ -31,15 +33,39 @@ class GeneRegulatoryNetwork:
         
         return tf.index.tolist()
 
-# class GeneRegulatoryNetwork:
-#     ## This GRN is specific to the day3_1 dataset
-#     #TODO: make it more general
 
-#     def __init__(self):
-#         with open('../data/celloracle_links.pkl', 'rb') as f:
-#             self.links_dict = pickle.load(f)
+class CellOracleLinks:
+    
+    def __init__(self):
+        pass
 
-#     def get_regulators(self, adata, target_gene):
-#         pass
+    def get_regulators(self, adata, target_gene):
+        pass
+
+
+class DayThreeRegulatoryNetwork(CellOracleLinks):
+
+    def __init__(self):
+
+        self.base_pth = os.path.join(
+                os.path.dirname(__file__), '..', '..', '..', 'data', 'slideseq')
+
+        with open(self.base_pth+'/celloracle_links_day3_1.pkl', 'rb') as f:
+            self.links_day3_1 = pickle.load(f)
+
+        with open(self.base_pth+'/celloracle_links_day3_2.pkl', 'rb') as f:
+            self.links_day3_2 = pickle.load(f)
+
+    def get_regulators(self, adata, target_gene, alpha=0.05):
+        """
+        Returns regulators of a target gene using CellOracle links.
+        """
+
+        regulators = pd.concat([
+            link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']]
+            for link_data in self.links_day3_1.values()
+        ], axis=0)
+
+        return regulators.groupby('source').mean().index.tolist()
 
                 
