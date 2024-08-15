@@ -201,6 +201,7 @@ class VisionEstimator(Estimator):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
+            
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
@@ -235,6 +236,7 @@ class VisionEstimator(Estimator):
             _y = batch_y.cpu().numpy()
             
             ols_pred = beta_init[0]
+
             
             for w in range(len(beta_init)-1):
                 ols_pred += _x[:, w]*beta_init[w+1]
@@ -485,6 +487,82 @@ class ViTEstimatorV2(VisionEstimator):
         print(f'Best model at {best_iter}/{max_epochs}')
         
         return best_model, losses
+
+    def sim_fit(
+        self, X, y, xy,
+        labels,
+        init_betas='ols', 
+        max_epochs=100, 
+        learning_rate=0.001, 
+        spatial_dim=64,
+        batch_size=32, 
+        mode='train',
+        regularize=True,
+        rotate_maps=True,
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        ):
+
+        assert init_betas in ['ones', 'ols']
+        
+        self.spatial_dim = spatial_dim  
+
+        if init_betas == 'ones':
+            beta_init = torch.ones(len(self.regulators)+1)
+        
+        elif init_betas == 'ols':
+            ols = LeastSquaredEstimator()
+            ols.fit(X, y)
+            beta_init = ols.get_betas()
+            
+        self.beta_init = np.array(beta_init).reshape(-1, )
+        
+        try:
+            train_dataloader, valid_dataloader = _build_dataloaders(
+                X, y, xy, labels, batch_size=batch_size, spatial_dim=spatial_dim)
+           
+            model = ViT(self.beta_init, in_channels=self.n_clusters, spatial_dim=spatial_dim, 
+                    n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads)
+            criterion = nn.MSELoss(reduction='mean')
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            
+            model.to(device)
+            # model = torch.compile(model)
+            
+            losses = []
+            best_model = copy.deepcopy(model)
+            best_score = np.inf
+            best_iter = 0
+        
+            baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
+                
+            with tqdm(range(max_epochs)) as pbar:
+                for epoch in pbar:
+                    training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
+                    validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+                    
+                    losses.append(validation_loss)
+
+                    pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
+
+                    if validation_loss < best_score:
+                        best_score = validation_loss
+                        best_model = copy.deepcopy(model)
+                        best_iter = epoch
+                
+            best_model.eval()
+            
+            print(f'Best model at {best_iter}/{max_epochs}')
+            
+            self.model = model  
+            self.losses = losses
+        
+        except KeyboardInterrupt:
+            print('Training interrupted...')
+            pass
+
+
+
+
     
     def fit(
         self,
@@ -567,7 +645,3 @@ if __name__ == '__main__':
     estimator.fit(X, y, xy, c)
     print(estimator.get_betas().shape)
 
-
-
-    # y_pred = estimator.predict(X, xy)
-    # print(mean_squared_error(y, y_pred))
