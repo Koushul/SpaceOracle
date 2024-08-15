@@ -44,6 +44,10 @@ class CellOracleLinks:
 
 
 class DayThreeRegulatoryNetwork(CellOracleLinks):
+    """
+    CellOracle infered GRN 
+    These are dataset specific and come with estimated betas and p-values
+    """
 
     def __init__(self):
 
@@ -53,19 +57,18 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         with open(self.base_pth+'/celloracle_links_day3_1.pkl', 'rb') as f:
             self.links_day3_1 = pickle.load(f)
 
-        with open(self.base_pth+'/celloracle_links_day3_2.pkl', 'rb') as f:
-            self.links_day3_2 = pickle.load(f)
+        # with open(self.base_pth+'/celloracle_links_day3_2.pkl', 'rb') as f:
+        #     self.links_day3_2 = pickle.load(f)
 
     def get_regulators(self, adata, target_gene, alpha=0.05):
-        """
-        Returns regulators of a target gene using CellOracle links.
-        """
-
-        regulators = pd.concat([
-            link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']]
-            for link_data in self.links_day3_1.values()
-        ], axis=0)
+        regulators = self.get_regulators_with_pvalues(adata, target_gene, alpha)
 
         return regulators.groupby('source').mean().index.tolist()
+
+    def get_regulators_with_pvalues(self, adata, target_gene, alpha=0.05):
+        return pd.concat([
+                link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']]
+                for link_data in self.links_day3_1.values()
+            ], axis=0)
 
                 

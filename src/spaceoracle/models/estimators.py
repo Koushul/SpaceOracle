@@ -17,7 +17,7 @@ from .vit_blocks import ViT
 
 from ..tools.utils import set_seed, seed_worker, deprecated
 from ..tools.data import SpaceOracleDataset
-from ..tools.network import GeneRegulatoryNetwork
+from ..tools.network import GeneRegulatoryNetwork, DayThreeRegulatoryNetwork
 
 set_seed(42)
 
@@ -38,7 +38,7 @@ class Estimator(ABC):
         pass
         
     @abstractmethod
-    def fit(self, X, y):
+    def fit(self):
         pass
     
     @abstractmethod
@@ -239,7 +239,8 @@ class VisionEstimator(Estimator):
         assert target_gene in adata.var_names
         self.adata = adata
         self.target_gene = target_gene
-        self.grn = GeneRegulatoryNetwork()
+        # self.grn = GeneRegulatoryNetwork() # Base GRN
+        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
         self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
 
@@ -315,7 +316,10 @@ class VisionEstimator(Estimator):
         params = {
             'batch_size': batch_size,
             'worker_init_fn': seed_worker,
-            'generator': g
+            'generator': g,
+            'pin_memory': True,
+            'num_workers': 4,
+            'drop_last': True,
         }
         
         dataset = SpaceOracleDataset(
