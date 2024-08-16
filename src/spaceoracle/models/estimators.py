@@ -634,3 +634,10 @@ class ViTEstimatorV2(VisionEstimator):
         except KeyboardInterrupt:
             print('Training interrupted...')
             pass
+
+
+    def export(self):
+        model = self.model.cpu()
+        model.eval()
+
+        return model, self.regulators, self.target_gene

@@ -12,8 +12,7 @@ class Oracle(ABC):
     def __init__(self, adata):
         self.adata = adata.copy()
         
-    
-    
+       
 
 class SpaceOracle(Oracle):
 
@@ -28,14 +27,15 @@ class SpaceOracle(Oracle):
             in_place=True
         )
 
+        self.estimator_models = {}
+        self.regulators = {}
+
         for i in ['Cd74']:
+            self.estimator_models[i] = {}
+
             estimator = ViTEstimatorV2(self.adata, target_gene=i)
 
-
-
             print(asizeof.asizeof(estimator)/(1024*1024))
-
-
 
             estimator.fit(
                 annot='rctd_cluster', 
@@ -53,18 +53,14 @@ class SpaceOracle(Oracle):
                 hidden_d=16
             )
 
-            estimator.adata = None
-            estimator.grn = None
-            
-            gc.collect()
-
-            print(asizeof.asizeof(estimator)/(1024*1024))
-
-            print(asizeof.asizeof(estimator.model)/(1024*1024))
+            model, regulators, target_gene = estimator.export()
+            self.estimator_models[target_gene]['model'] = model
+            self.estimator_models[target_gene]['regulators'] = regulators
 
 
 
-
+    def estimate_betas(self):
+        NotImplementedError
 
 
 
