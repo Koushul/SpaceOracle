@@ -21,7 +21,6 @@ adata_test = anndata.read_h5ad('../data/slideseq/day3_2.h5ad')
 n_top_genes = 4000
 min_cells = 10
 min_counts = 350
-
 adata_train.var_names_make_unique()
 adata_train.var["mt"] = adata_train.var_names.str.startswith("mt-")
 sc.pp.calculate_qc_metrics(adata_train, qc_vars=["mt"], inplace=True)

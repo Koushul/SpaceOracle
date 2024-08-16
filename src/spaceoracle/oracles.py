@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import sys
 import gc
-from pympler import asizeof
 
+from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
 from .models.estimators import ViTEstimatorV2
 
@@ -16,7 +16,7 @@ class Oracle(ABC):
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, anot='rctd_cluster', spatial_dim=64):
+    def __init__(self, adata, anot='rctd_cluster', max_epochs=10, spatial_dim=64):
         super().__init__(adata)
         self.anot = anot
         self.spatial_dim = spatial_dim
@@ -26,20 +26,37 @@ class SpaceOracle(Oracle):
             spatial_dim=self.spatial_dim,
             in_place=True
         )
+        
+        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        
 
         self.estimator_models = {}
         self.regulators = {}
 
-        for i in ['Cd74']:
+        for i in ['Uvrag',
+ 'Secisbp2l',
+ 'Nr4a2',
+ 'Dhx40',
+ 'Pcca',
+ 'Brf1',
+ 'Maea',
+ 'Mllt11',
+ 'Gpank1',
+ 'Ffar2',
+ 'Igfbp4',
+ 'Nbr1',
+ 'Unc93b1',
+ 'Rin2',
+ 'Mrps26',
+ 'Malat1',
+ 'Rps20']:
             self.estimator_models[i] = {}
 
             estimator = ViTEstimatorV2(self.adata, target_gene=i)
 
-            print(asizeof.asizeof(estimator)/(1024*1024))
-
             estimator.fit(
                 annot='rctd_cluster', 
-                max_epochs=2, 
+                max_epochs=max_epochs, 
                 learning_rate=3e-4, 
                 spatial_dim=self.spatial_dim,
                 batch_size=32,

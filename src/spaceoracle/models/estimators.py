@@ -241,6 +241,8 @@ class VisionEstimator(Estimator):
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
         self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
+        
+        assert len(self.regulators) > 0, f'No regulators found for target gene {self.target_gene}.'
 
     def predict_y(self, model, betas, inputs_x):
         y_pred = betas[:, 0]*model.betas[0]
@@ -559,7 +561,7 @@ class ViTEstimatorV2(VisionEstimator):
                 
                 losses.append(validation_loss)
 
-                pbar.set_description(f'[{device.type}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
+                pbar.set_description(f'[{self.target_gene}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
             
                 if validation_loss < best_score:
                     best_score = validation_loss
@@ -568,7 +570,7 @@ class ViTEstimatorV2(VisionEstimator):
             
         best_model.eval()
         
-        print(f'Best model at {best_iter}/{max_epochs}')
+        # print(f'Best model at {best_iter}/{max_epochs}')
         
         return best_model, losses
     
