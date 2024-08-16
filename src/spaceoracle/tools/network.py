@@ -68,9 +68,6 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         return filtered_regulators.index.tolist()
 
     def get_regulators_with_pvalues(self, adata, target_gene, alpha=0.05):
-        return pd.concat([
-                link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']]
-                for link_data in self.links_day3_1.values()
-            ], axis=0).reset_index(drop=True)
+        return pd.concat([link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']] for link_data in self.links_day3_1.values()], axis=0).reset_index(drop=True)
 
                 

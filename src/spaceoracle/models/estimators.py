@@ -235,7 +235,6 @@ class BetaModel(nn.Module):
 
 class VisionEstimator(Estimator):
     def __init__(self, adata, target_gene):
-        assert target_gene in adata.var_names
         self.adata = adata
         self.target_gene = target_gene
         # self.grn = GeneRegulatoryNetwork() # Base GRN
@@ -316,8 +315,8 @@ class VisionEstimator(Estimator):
             'batch_size': batch_size,
             'worker_init_fn': seed_worker,
             'generator': g,
-            'pin_memory': True,
-            'num_workers': 4,
+            'pin_memory': False,
+            'num_workers': 0,
             'drop_last': True,
         }
         
@@ -605,7 +604,7 @@ class ViTEstimatorV2(VisionEstimator):
             beta_init = ols.get_betas()
 
         elif init_betas == 'co':
-            co_coefs = self.grn.get_regulators_with_pvalues(adata, 'Cd74').groupby('source').mean()
+            co_coefs = self.grn.get_regulators_with_pvalues(adata, self.target_gene).groupby('source').mean()
             co_coefs = co_coefs.loc[self.regulators]
             beta_init = np.array(co_coefs.values)
             

@@ -60,14 +60,20 @@ class SpaceOracleDataset(SpatialDataset):
         self.clusters = np.array(self.adata.obs[annot])
         self.n_clusters = len(np.unique(self.clusters))
         self.xy = np.array(self.adata.obsm['spatial'])
-        
-        self.spatial_maps = xyc2spatial(
-            self.xy[:, 0], 
-            self.xy[:, 1], 
-            self.clusters,
-            self.spatial_dim, 
-            self.spatial_dim
-        )
+
+        if 'spatial_maps' in self.adata.obsm:
+            self.spatial_maps = self.adata.obsm['spatial_maps']
+        else:
+            self.spatial_maps = xyc2spatial(    
+                self.xy[:, 0], 
+                self.xy[:, 1], 
+                self.clusters,
+                self.spatial_dim, 
+                self.spatial_dim,
+                disable_tqdm=False
+            )
+            
+            self.adata.obsm['spatial_maps'] = self.spatial_maps
 
     def __getitem__(self, index):
         sp_map = self.spatial_maps[index]

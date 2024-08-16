@@ -1,3 +1,7 @@
+print('init')
+exit()
+
+
 import sys
 sys.path.append('../src')
 
@@ -12,6 +16,7 @@ import torch
 
 adata_train = anndata.read_h5ad('../data/slideseq/day3_1.h5ad')
 adata_test = anndata.read_h5ad('../data/slideseq/day3_2.h5ad')
+
 
 n_top_genes = 4000
 min_cells = 10
@@ -34,14 +39,14 @@ sc.pp.highly_variable_genes(
 
 adata_train = adata_train[:, adata_train.var.highly_variable]
 
-
 estimator = ViTEstimatorV2(adata_train, target_gene='Cd74')
+print(estimator.regulators)
 
 estimator.fit(
     annot='rctd_cluster',
     max_epochs=10,
     learning_rate=3e-4,
-    spatial_dim=64,
+    spatial_dim=16,
     batch_size=32,
     init_betas='co',
     mode='train_test',
