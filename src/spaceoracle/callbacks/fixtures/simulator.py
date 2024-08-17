@@ -79,13 +79,18 @@ class SimulatedDataV2:
         
         tf_gexes = []
         for tf in tfs:
-            tf_ex = np.array([abs((c%5)*0.1 + (np.sin(tf+1) + np.cos(x)) + y)])
+            tf_ex = np.array([abs((c%5) + (np.sin(tf+1) + np.cos(x+y)))])
             tf_gexes.append(np.array(tf_ex))                # 1, cell
         tf_gexes = np.squeeze(np.array(tf_gexes)).T         # cell, TF
 
         betas = [(np.random.rand(x.shape[0]) * 0.8)]        # beta_0 coeff
+        
+        cmap_dict = {c: np.random.rand() for c in range(self.clusters)}
+        replacements = np.vectorize(lambda x: cmap_dict.get(x, x))
+        cmap = replacements(c)
+        
         for tf in tfs:                                      # generate betas for each tf
-            beta = np.array([0.1*np.sin(x)+0.2*np.cos(y)*tf])
+            beta = np.array([cmap + 0.9*tf + 0.1*np.cos(x+y)])
             betas.append(beta.squeeze())     
         betas = np.array(betas).squeeze().T                 # beta_tf, cell
 
