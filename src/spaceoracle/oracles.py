@@ -53,22 +53,32 @@ class SpaceOracle(Oracle):
             self.estimator_models[i] = {}
 
             estimator = ViTEstimatorV2(self.adata, target_gene=i)
-
-            estimator.fit(
-                annot='rctd_cluster', 
-                max_epochs=max_epochs, 
-                learning_rate=3e-4, 
-                spatial_dim=self.spatial_dim,
-                batch_size=32,
-                init_betas='co',
-                mode='train_test',
-                rotate_maps=True,
-                regularize=False,
-                n_patches=16, 
-                n_heads=4, 
-                n_blocks=3, 
-                hidden_d=16
+            
+            estimator.model = ViT(
+                self.beta_init, 
+                in_channels=self.n_clusters, 
+                spatial_dim=spatial_dim, 
+                n_patches=n_patches, 
+                n_blocks=n_blocks, 
+                hidden_d=hidden_d, 
+                n_heads=n_heads
             )
+
+            # estimator.fit(
+            #     annot='rctd_cluster', 
+            #     max_epochs=max_epochs, 
+            #     learning_rate=3e-4, 
+            #     spatial_dim=self.spatial_dim,
+            #     batch_size=32,
+            #     init_betas='co',
+            #     mode='train_test',
+            #     rotate_maps=True,
+            #     regularize=False,
+            #     n_patches=16, 
+            #     n_heads=4, 
+            #     n_blocks=3, 
+            #     hidden_d=16
+            # )
 
             model, regulators, target_gene = estimator.export()
             self.estimator_models[target_gene]['model'] = model
