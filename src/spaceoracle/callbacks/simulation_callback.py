@@ -1,5 +1,6 @@
 from scipy.stats import pearsonr
 import pickle
+import copy
 
 from .fixtures.simulator import SimulatedData, SimulatedDataV2
 
@@ -23,3 +24,16 @@ class SimulationBetaCallbackV2:
             f'beta{i}': pearsonr(beta_pred[:, i], beta_truth[:,i]).statistic
             for i in range(beta_pred.shape[1])
         }
+
+    def perturb(self, sim_data, tf_label):
+        tf_index = sim_data.tf_labels.index(tf_label)
+        
+        psim_data = copy.deepcopy(sim_data)
+        psim_data.X[:, tf_index] = 0
+        
+        psim_data.set_targex()
+        psim_data.package_adata()
+        
+        return psim_data
+        
+        

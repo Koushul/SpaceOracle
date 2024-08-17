@@ -57,6 +57,8 @@ class SimulatedDataV2:
     adata: anndata.AnnData = field(init=False)
 
     def __post_init__(self):
+        self.tf_labels = [f'tf_{i+1}' for i in range(self.ntfs)]
+        
         cell_pos = [self.generate_positions(r, r+1) for r in range(self.clusters)]
         coords = np.vstack([np.array(pos) for pos in cell_pos])
         x_coords = coords[:, 0]
@@ -65,8 +67,8 @@ class SimulatedDataV2:
         self.xy = np.hstack((x_coords[:, None], y_coords[:, None]))
         self.labels = np.array([r for r in range(self.clusters) for _ in range(self.ncells)])
 
-        self.betas, self.y, self.X = self.beta_func(x_coords, y_coords, self.labels) 
-        self.tf_labels = [f'tf_{i}' for i in range(self.ntfs)]
+        self.betas, self.X = self.beta_func(x_coords, y_coords, self.labels)
+        self.betas, self.y, self.X = self.set_targex()
         self.adata = self.package_adata()
 
     def beta_func(self, x, y, c):
@@ -86,6 +88,12 @@ class SimulatedDataV2:
             beta = np.array([0.1*np.sin(x)+0.2*np.cos(y)*tf])
             betas.append(beta.squeeze())     
         betas = np.array(betas).squeeze().T                 # beta_tf, cell
+
+        return betas, tf_gexes
+
+    def set_targex(self):
+        betas = self.betas
+        tf_gexes = self.X
         
         X = np.array([(betas[i, 1:] * tf_gex + betas[i, 0]) for i, tf_gex in enumerate(tf_gexes)])
         X = np.sum(X, axis = 1)                             # cell, 1
