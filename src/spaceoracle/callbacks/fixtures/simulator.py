@@ -2,6 +2,8 @@ import pandas as pd
 import os
 import numpy as np
 from dataclasses import dataclass, field
+import anndata
+
 
 @dataclass
 class SimulatedData:
@@ -36,19 +38,26 @@ class SimulatedData:
 class SimulatedDataV2:
     """
     Holds simulated data based on CO data
+    `X` - tf gexes
+    `y` - target gex
+    `xy` - spatial xy coordinates
+    `clusters` - nclusters
+    `labels` - cell cluster label
     """
     ncells: int = 1000
-    ntfs: int = 19  # Default number of transcription factors
-    clusters: int = 7  # Default number of clusters
+    ntfs: int = 19  
+    clusters: int = 7 
+    position: str = 'circle'
 
     labels: list = field(init=False)
     betas: np.ndarray = field(init=False)
     X: np.ndarray = field(init=False)
     xy: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
+    adata: anndata.AnnData = field(init=False)
 
     def __post_init__(self):
-        cell_pos = [self.generate_positions(r, r + 1) for r in range(self.clusters)]
+        cell_pos = [self.generate_positions(r, r+1) for r in range(self.clusters)]
         coords = np.vstack([np.array(pos) for pos in cell_pos])
         x_coords = coords[:, 0]
         y_coords = coords[:, 1]
@@ -56,41 +65,61 @@ class SimulatedDataV2:
         self.xy = np.hstack((x_coords[:, None], y_coords[:, None]))
         self.labels = np.array([r for r in range(self.clusters) for _ in range(self.ncells)])
 
-        tfs = np.array(list(range(self.ntfs)))
+        self.betas, self.y, self.X = self.beta_func(x_coords, y_coords, self.labels) 
+        self.tf_labels = [f'tf_{i}' for i in range(self.ntfs)]
+        self.adata = self.package_adata()
 
-        self.betas, self.y, self.X = self.beta_func(x_coords, y_coords, self.labels, tfs) # the y and X are switched on purpose!
-
-    def beta_func(self, x, y, c, tf_index):
+    def beta_func(self, x, y, c):
         x = np.array(x).flatten()
         y = np.array(y).flatten()
+
+        tfs = np.random.rand(self.ntfs)
         
         tf_gexes = []
-        for label in c:
-            tf_ex = [label * (tf+1) % 3 * 0.1 for tf in range(self.ntfs)]
-            tf_gexes.append(np.array(tf_ex))
-        tf_gexes = np.array(tf_gexes)
+        for tf in tfs:
+            tf_ex = np.array([abs((c%5)*0.1 + (np.sin(tf+1) + np.cos(x)) + y)])
+            tf_gexes.append(np.array(tf_ex))                # 1, cell
+        tf_gexes = np.squeeze(np.array(tf_gexes)).T         # cell, TF
 
-        c = np.array(c).flatten()
+        betas = [(np.random.rand(x.shape[0]) * 0.8)]        # beta_0 coeff
+        for tf in tfs:                                      # generate betas for each tf
+            beta = np.array([0.1*np.sin(x)+0.2*np.cos(y)*tf])
+            betas.append(beta.squeeze())     
+        betas = np.array(betas).squeeze().T                 # beta_tf, cell
+        
+        X = np.array([(betas[i, 1:] * tf_gex + betas[i, 0]) for i, tf_gex in enumerate(tf_gexes)])
+        X = np.sum(X, axis = 1)                             # cell, 1
 
-        betas = (c + 1) * (x + y) / (c%2 + 1)
-        betas = betas * (tf_index[:, None] + 1)
-        coeff = np.linspace(-5, 1, num=x.shape[0]) 
+        scale_down = max(np.max(tf_gexes), np.max(X))
+        tf_gexes /= scale_down
+        X /= scale_down
 
-        X = betas + coeff  
-        X = X.sum(axis = 0)
-
-        betas = np.hstack((coeff[:, None], betas.T))
+        betas[:, 0] /= scale_down
 
         return betas, X, tf_gexes
 
-
     def generate_positions(self, radius_min, radius_max):
-        # Generate positions for cells
         positions = []
         for _ in range(self.ncells):
             angle = np.random.uniform(0, 2 * np.pi)
             r = np.random.uniform(radius_min, radius_max)
             x = r * np.cos(angle)
             y = r * np.sin(angle)
+
+            if self.position == 'wave':
+                x = 0.8 * abs(x) * np.random.uniform(1, 2.5)
+                y = abs(y) * np.random.uniform(1, 2)
             positions.append([x, y])
+
         return positions
+    
+    def package_adata(self):
+        df = pd.DataFrame(self.X)
+        df.columns = self.tf_labels
+        df['target_gene'] = self.y
+        
+        adata = anndata.AnnData(df)
+
+        adata.obs['sim_cluster'] = self.labels
+        adata.obsm['spatial'] = self.xy
+        return adata
