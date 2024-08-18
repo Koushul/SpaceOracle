@@ -6,6 +6,7 @@ from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
 import copy
 from tqdm import tqdm 
+import enlighten
 
 import torch
 import torch.nn as nn
@@ -129,10 +130,15 @@ class VisionEstimator(Estimator):
         else:
             self.regulators = regulators
             self.n_clusters = n_clusters
+
         
         assert len(self.regulators) > 0, f'No regulators found for target gene {self.target_gene}.'
 
     def predict_y(self, model, betas, inputs_x):
+
+        assert inputs_x.shape[1] == len(self.regulators) == model.dim-1
+        assert betas.shape[1] == len(self.regulators)+1 == len(model.betas) == len(self.regulators)+1
+
         y_pred = betas[:, 0]*model.betas[0]
          
         for w in range(model.dim-1):
@@ -402,7 +408,7 @@ class GeoCNNEstimatorV2(VisionEstimator):
         
         
 
-class ViTEstimatorV2(VisionEstimator):
+class SpatialInsights(VisionEstimator):
     def _build_model(
         self,
         adata,
@@ -414,7 +420,8 @@ class ViTEstimatorV2(VisionEstimator):
         learning_rate,
         rotate_maps,
         regularize,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
+        pbar=None
         ):
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
@@ -443,20 +450,30 @@ class ViTEstimatorV2(VisionEstimator):
         best_iter = 0
     
         baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
-            
-        with tqdm(range(max_epochs)) as pbar:
-            for epoch in pbar:
-                training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
-                validation_loss = self._validation_loop(model, valid_dataloader, criterion)
-                
-                losses.append(validation_loss)
+        _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
 
-                pbar.set_description(f'[{self.target_gene}] MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}')
+        if pbar is None:
+            _manager = enlighten.get_manager()
+            pbar = _manager.counter(
+                total=max_epochs, 
+                desc=f'{_prefix} <> MSE: ... | Baseline: {baseline_loss:.4f}', 
+                unit='epochs'
+            )
+            pbar.refresh()
             
-                if validation_loss < best_score:
-                    best_score = validation_loss
-                    best_model = copy.deepcopy(model)
-                    best_iter = epoch
+        for epoch in range(max_epochs):
+            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
+            validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+            
+            losses.append(validation_loss)
+
+            if validation_loss < best_score:
+                best_score = validation_loss
+                best_model = copy.deepcopy(model)
+                best_iter = epoch
+            
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
+            pbar.update()
             
         best_model.eval()
         
@@ -476,7 +493,8 @@ class ViTEstimatorV2(VisionEstimator):
         mode='train',
         regularize=True,
         rotate_maps=True,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2
+        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
+        pbar=None
         ):
         
         
@@ -499,9 +517,12 @@ class ViTEstimatorV2(VisionEstimator):
         elif init_betas == 'co':
             co_coefs = self.grn.get_regulators_with_pvalues(adata, self.target_gene).groupby('source').mean()
             co_coefs = co_coefs.loc[self.regulators]
-            beta_init = np.array(co_coefs.values)
+            beta_init = np.array(co_coefs.values).reshape(-1, )
+            beta_init = np.concatenate([beta_init, [1]], axis=0) 
             
         self.beta_init = np.array(beta_init).reshape(-1, )
+
+        assert len(self.beta_init) == len(self.regulators)+1
         
         try:
             model, losses = self._build_model(
@@ -517,7 +538,8 @@ class ViTEstimatorV2(VisionEstimator):
                 n_patches=n_patches, 
                 n_blocks=n_blocks, 
                 hidden_d=hidden_d, 
-                n_heads=n_heads
+                n_heads=n_heads,
+                pbar=pbar
             )
             
             self.model = model  
@@ -527,3 +549,13 @@ class ViTEstimatorV2(VisionEstimator):
         except KeyboardInterrupt:
             print('Training interrupted...')
             pass
+
+
+    def export(self):
+        self.model.eval()
+        self.model.cpu()
+        return self.model, self.regulators, self.target_gene
+
+
+## backward compatibility
+ViTEstimatorV2 = SpatialInsights
