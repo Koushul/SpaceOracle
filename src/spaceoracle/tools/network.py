@@ -63,7 +63,9 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
     def get_regulators(self, adata, target_gene, alpha=0.05):
         regulators = self.get_regulators_with_pvalues(adata, target_gene, alpha)
 
-        return regulators.groupby('source').mean().index.tolist()
+        regulators = regulators.groupby('source').mean().index.tolist()
+        regulators = [r for r in regulators if r in list(adata.to_df().columns)]
+        return regulators
 
     def get_regulators_with_pvalues(self, adata, target_gene, alpha=0.05):
         return pd.concat([
