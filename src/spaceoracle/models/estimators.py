@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 import copy
 from tqdm import tqdm 
 import enlighten
+from numba import jit
 
 import torch
 import torch.nn as nn
@@ -131,8 +132,10 @@ class VisionEstimator(Estimator):
             self.regulators = regulators
             self.n_clusters = n_clusters
 
+        self.model = None
+        self.losses = []
         
-        assert len(self.regulators) > 0, f'No regulators found for target gene {self.target_gene}.'
+        # assert len(self.regulators) > 0, f'No regulators found for target gene {self.target_gene}.'
 
     def predict_y(self, model, betas, inputs_x):
 
@@ -485,22 +488,27 @@ class SpatialInsights(VisionEstimator):
     def fit(
         self,
         annot,
-        init_betas='co', 
+        init_betas='ols', 
         max_epochs=100, 
-        learning_rate=0.001, 
+        learning_rate=2e-4, 
         spatial_dim=64,
         batch_size=32, 
         mode='train',
-        regularize=True,
+        regularize=False,
         rotate_maps=True,
         n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
         pbar=None
         ):
         
-        
+        assert annot in self.adata.obs.columns
         assert init_betas in ['ones', 'ols', 'co']
-        
+
         self.spatial_dim = spatial_dim  
+        self.regularize = regularize
+        self.rotate_maps = rotate_maps
+        self.init_betas = init_betas
+        self.annot = annot
+
 
         adata = self.adata.copy()
 
@@ -552,8 +560,8 @@ class SpatialInsights(VisionEstimator):
 
 
     def export(self):
-        self.model.eval()
-        self.model.cpu()
+        # self.model.eval()
+        # self.model.cpu()
         return self.model, self.regulators, self.target_gene
 
 
