@@ -44,7 +44,7 @@ class SimulatedDataV2:
     `clusters` - nclusters
     `labels` - cell cluster label
     """
-    ncells: int = 1000
+    density: float = 0.3
     ntfs: int = 19  
     clusters: int = 7 
     position: str = 'circle'
@@ -59,13 +59,13 @@ class SimulatedDataV2:
     def __post_init__(self):
         self.tf_labels = [f'tf_{i+1}' for i in range(self.ntfs)]
         
-        cell_pos = [self.generate_positions(r, r+1) for r in range(self.clusters)]
+        cell_pos, ncells = zip(*[self.generate_positions(r, r+1) for r in range(self.clusters)])
         coords = np.vstack([np.array(pos) for pos in cell_pos])
         x_coords = coords[:, 0]
         y_coords = coords[:, 1]
 
         self.xy = np.hstack((x_coords[:, None], y_coords[:, None]))
-        self.labels = np.array([r for r in range(self.clusters) for _ in range(self.ncells)])
+        self.labels = np.repeat(np.arange(len(ncells)), ncells)
 
         self.betas, self.X = self.beta_func(x_coords, y_coords, self.labels)
         self.betas, self.y, self.X = self.set_targex()
@@ -89,11 +89,12 @@ class SimulatedDataV2:
         replacements = np.vectorize(lambda x: cmap_dict.get(x, x))
         cmap = replacements(c)
         
-        noise = 0.3       # increase to cause more variation within cluster
-        beta_var = 2      # increase to cause greater variation between clusters
+        noise = 2           # increase to cause more variation within cluster
+        beta_var = 10       # increase to cause greater variation between clusters
+        beta_mag = 0.1      # increase to get bigger beta magnitude
 
         for tf in tfs:                                      # generate betas for each tf
-            beta = np.array([cmap + beta_var*tf + noise*np.cos(x+y)])
+            beta = np.array([beta_var*cmap + noise*(np.cos(noise+x)+np.sin(noise+y))]) * (beta_mag*tf)
             betas.append(beta.squeeze())     
         betas = np.array(betas).squeeze().T                 # beta_tf, cell
 
@@ -116,7 +117,11 @@ class SimulatedDataV2:
 
     def generate_positions(self, radius_min, radius_max):
         positions = []
-        for _ in range(self.ncells):
+
+        area = np.pi*radius_max**2 - np.pi*radius_min**2
+        ncells = round(area * self.density)
+        
+        for _ in range(ncells):
             angle = np.random.uniform(0, 2 * np.pi)
             r = np.random.uniform(radius_min, radius_max)
             x = r * np.cos(angle)
@@ -127,7 +132,7 @@ class SimulatedDataV2:
                 y = abs(y) * np.random.uniform(1, 2)
             positions.append([x, y])
 
-        return positions
+        return positions, ncells
     
     def package_adata(self):
         df = pd.DataFrame(self.X)
