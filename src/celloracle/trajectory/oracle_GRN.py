@@ -79,6 +79,7 @@ def _getCoefMatrix(gem, TFdict, alpha=1, verbose=True):
         reggenes = TFdict[target_gene]
         reggenes = intersect(reggenes, genes)
 
+
         if target_gene in reggenes:
             reggenes.remove(target_gene)
         if len(reggenes) == 0 :

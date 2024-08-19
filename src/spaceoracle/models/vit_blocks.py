@@ -14,7 +14,8 @@ class ViT(nn.Module):
         
         self.betas = betas
         self.dim = betas.shape[0] # number of TFs
-
+        self.in_channels = in_channels
+        self.spatial_dim = spatial_dim
         # Attributes
         chw = (in_channels, spatial_dim, spatial_dim) # ( C , H , W )
         self.n_patches = n_patches
@@ -81,6 +82,21 @@ class ViT(nn.Module):
             att_weights.append(att)
         
         return att_weights
+
+
+
+
+    def __str__(self):
+        # return ''
+        return f'VisionTransformer(in_channels={self.in_channels}, spatial_dim={self.spatial_dim}, n_patches={self.n_patches}, n_blocks={self.n_blocks}, hidden_d={self.hidden_d}, n_heads={self.n_heads})'
+
+    def __repr__(self):
+        return self.__str__()
+        
+        
+
+    
+
 
     
 
