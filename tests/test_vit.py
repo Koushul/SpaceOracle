@@ -115,3 +115,5 @@ def test_vit_with_real_data():
 
     estimator = ViTEstimatorV2(adata_train, target_gene='Cd74')
     assert len(estimator.regulators) == 15
+
+    assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 15
