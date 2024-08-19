@@ -18,7 +18,7 @@ from .vit_blocks import ViT
 
 from ..tools.utils import set_seed, seed_worker, deprecated
 from ..tools.data import SpaceOracleDataset
-from ..tools.network import GeneRegulatoryNetwork
+from ..tools.network import GeneRegulatoryNetwork, DayThreeRegulatoryNetwork
 
 set_seed(42)
 
@@ -39,13 +39,12 @@ class Estimator(ABC):
         pass
         
     @abstractmethod
-    def fit(self, X, y):
+    def fit(self):
         pass
     
     @abstractmethod
     def get_betas(self):
         pass
-
     
 class LeastSquaredEstimator(Estimator):
     
@@ -68,11 +67,12 @@ class ClusterLeastSquaredEstimator(LeastSquaredEstimator):
             self.beta_dict[cluster_label] = ols_model.betas
             self.pval_dict[cluster_label] = np.array(ols_model.t_stat)[:, 1]
 
-
     def get_betas(self, cluster_label):
         return self.beta_dict[self.betas]
-        
+
+
 class BetaModel(nn.Module):
+    @deprecated('Please use ViT instead.')
     def __init__(self, betas, in_channels=1, init=0.1):
         set_seed(42)
         super(BetaModel, self).__init__()
@@ -116,15 +116,20 @@ class BetaModel(nn.Module):
         return betas
 
 
-
 class VisionEstimator(Estimator):
-    def __init__(self, adata, target_gene):
+    def __init__(self, adata, target_gene, regulators=None, n_clusters=None):
         assert target_gene in adata.var_names
         self.adata = adata
         self.target_gene = target_gene
-        self.grn = GeneRegulatoryNetwork()
-        self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
-        self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
+        # self.grn = GeneRegulatoryNetwork()
+        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+
+        if regulators == None and n_clusters == None:
+            self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
+            self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
+        else:
+            self.regulators = regulators
+            self.n_clusters = n_clusters
 
     def predict_y(self, model, betas, inputs_x):
         y_pred = betas[:, 0]*model.betas[0]
@@ -138,12 +143,13 @@ class VisionEstimator(Estimator):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
+            
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-            if regularize:
+            if regularize: ##TODO: make this work more consistently
                 loss += lambd * ((a*torch.sum((betas)**2) + ((1-a)/2)*torch.sum(abs(betas)) ))
                 # loss += scale * torch.sum((betas)**2)
             loss.backward()
@@ -172,6 +178,7 @@ class VisionEstimator(Estimator):
             _y = batch_y.cpu().numpy()
             
             ols_pred = beta_init[0]
+
             
             for w in range(len(beta_init)-1):
                 ols_pred += _x[:, w]*beta_init[w+1]
@@ -198,7 +205,10 @@ class VisionEstimator(Estimator):
         params = {
             'batch_size': batch_size,
             'worker_init_fn': seed_worker,
-            'generator': g
+            'generator': g,
+            'pin_memory': True,
+            'num_workers': 4,
+            'drop_last': True,
         }
         
         dataset = SpaceOracleDataset(
@@ -230,6 +240,28 @@ class VisionEstimator(Estimator):
         
     @torch.no_grad()
     def get_betas(self, xy, labels, spatial_dim=None):
+        """
+        Get beta values for the given spatial coordinates and labels.
+
+        This method processes the input spatial data and labels through the trained model
+        to obtain beta values, which represent the importance of each regulator for the target gene.
+
+        Parameters:
+        -----------
+        xy : numpy.ndarray
+            Array of shape (n_samples, 2) containing spatial coordinates.
+        labels : numpy.ndarray
+            Array of shape (n_samples,) containing cell type or cluster labels.
+        spatial_dim : int, optional
+            Dimension of the spatial map. If None, uses the spatial dimension used to train the model.
+
+        Returns:
+        --------
+        numpy.ndarray
+            Array of shape (n_samples, n_regulators) containing beta values for each sample and regulator.
+
+
+        """
 
         spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
         
@@ -397,8 +429,16 @@ class ViTEstimatorV2(VisionEstimator):
                 adata, self.target_gene, self.regulators, 
                 mode=mode, rotate_maps=rotate_maps, batch_size=batch_size, annot=annot, spatial_dim=spatial_dim)
            
-        model = ViT(self.beta_init, in_channels=self.n_clusters, spatial_dim=spatial_dim, 
-                n_patches=n_patches, n_blocks=n_blocks, hidden_d=hidden_d, n_heads=n_heads)
+        model = ViT(
+            self.beta_init, 
+            in_channels=self.n_clusters, 
+            spatial_dim=spatial_dim, 
+            n_patches=n_patches, 
+            n_blocks=n_blocks, 
+            hidden_d=hidden_d, 
+            n_heads=n_heads
+        )
+        
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         
@@ -434,6 +474,7 @@ class ViTEstimatorV2(VisionEstimator):
         print(f'Best model at {best_iter}/{max_epochs}')
         
         return best_model, losses
+
     
     def fit(
         self,
@@ -493,32 +534,3 @@ class ViTEstimatorV2(VisionEstimator):
         except KeyboardInterrupt:
             print('Training interrupted...')
             pass
-
-
-
-if __name__ == '__main__':
-    import numpy as np
-    from sklearn.datasets import make_regression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import mean_squared_error
-    import matplotlib.pyplot as plt
-    import sys
-    sys.path.append('../src')
-
-    X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
-    X = StandardScaler().fit_transform(X)
-    y = StandardScaler().fit_transform(y.reshape(-1, 1)).reshape(-1, )
-    xy = np.random.rand(1000, 2)
-    c = np.random.randint(0, 13, size=(1000, 1))
-
-
-    estimator = ViTEstimator()
-    print('Fitting...')
-    estimator.fit(X, y, xy, c)
-    print(estimator.get_betas().shape)
-
-
-
-    # y_pred = estimator.predict(X, xy)
-    # print(mean_squared_error(y, y_pred))
