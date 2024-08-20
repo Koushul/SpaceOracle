@@ -59,10 +59,10 @@ class ViT(nn.Module):
     def get_att_weights(self, images):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        
+
         tokens = self.linear_mapper(patches)
-        tokens = torch.cat((self.class_token.expand(n, 1, -1), tokens), dim=1)
-        out = tokens + self.pos_embed.repeat(n, 1, 1)
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
+        out = tokens + pos_embed
         
         att_weights = []   # (n_blocks, batch, n_heads, seqs, seqs) where seqs is flattened patches
         for block in self.blocks:
@@ -70,7 +70,6 @@ class ViT(nn.Module):
             att_weights.append(att)
         
         return att_weights
-
 
 
     def __str__(self):
