@@ -9,6 +9,7 @@ import pickle
 import torch
 from dataclasses import dataclass
 from typing import List
+from tqdm import tqdm
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
@@ -23,12 +24,13 @@ class Oracle(ABC):
         self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
         
 @dataclass
-class OracleOutput:
+class BetaOutput:
     betas: np.ndarray
     regulators: List[str]
     target_gene: str
     target_gene_index: int
     regulators_index: List[int]
+
 
 class SpaceOracle(Oracle):
 
@@ -125,15 +127,14 @@ class SpaceOracle(Oracle):
         assert self.annot in adata.obs.columns
         assert 'spatial_maps' in adata.obsm.keys()
 
-
         estimator_dict = self.load_estimator(target_gene)
         estimator_dict['model'].eval()
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
 
-        return OracleOutput(
-            betas=estimator_dict['model'].forward(input_spatial_maps, input_cluster_labels).cpu().numpy(),
+        return BetaOutput(
+            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
@@ -141,24 +142,74 @@ class SpaceOracle(Oracle):
         )
 
 
+    def _update_sparse_tensor(self, sparse_tensor, beta_output):
+        assert isinstance(beta_output, BetaOutput)
+
+        for k in range(len(beta_output.regulators_index)):
+            indices = torch.tensor(
+                [[
+                    beta_output.regulators_index[k], 
+                    beta_output.target_gene_index, i] 
+                        for i in range(beta_output.betas.shape[0])
+                ], dtype=torch.long)
+
+            values = beta_output.betas[:, k+1]
+            new_sparse_tensor = torch.sparse_coo_tensor(indices.t(), values, sparse_tensor.size())
+            sparse_tensor = sparse_tensor + new_sparse_tensor
+
+        return sparse_tensor
+
+
+
+
+
+
+
 
     def get_coef_matrix(self, adata):
-        gem = adata.to_df()
-        genes = gem.columns
-        all_genes_in_dict = intersect(gem.columns, list(TFdict.keys()))
-        zero_ = pd.Series(np.zeros(len(genes)), index=genes)
+        num_genes = len(adata.var_names)
+        indices = torch.empty((3, 0), dtype=torch.long)
+        values = torch.empty(0)
+        
+        sparse_tensor = torch.sparse_coo_tensor(
+            indices, values, (num_genes, num_genes, adata.shape[0]))
+
+        for gene in tqdm(self.trained_genes):
+            beta_out = self._get_betas(adata, gene) # cell x beta+1
+            sparse_tensor = self._update_sparse_tensor(sparse_tensor, beta_out) # gene x gene x cell
+
+        return sparse_tensor
 
 
+    def perturb(self, gene_mtx, sparse_tensor, n_propagation=3):
+        assert sparse_tensor.shape == (gene_mtx.shape[1], gene_mtx.shape[1], gene_mtx.shape[0])
+        
+        simulation_input = gene_mtx.copy()
 
+        for i in [74]:
+            simulation_input[i] = 0
 
+        delta_input = simulation_input - gene_mtx
 
-        NotImplementedError
+        delta_simulated = delta_input.copy()
+        
+        for i in range(n_propagation):
+            delta_simulated = torch.concat([torch.sparse.mm(
+                    sparse_tensor[..., i], 
+                    torch.from_numpy(delta_simulated)[i].view(delta_simulated.shape[1], 1)
+                ) for i in tqdm(range(delta_simulated.shape[0]))], dim=1).numpy().reshape(gene_mtx.shape[0], gene_mtx.shape[1])
 
+            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
 
+            
+            gem_tmp = gene_mtx + delta_simulated
+            gem_tmp[gem_tmp<0] = 0
+            delta_simulated = gem_tmp - gene_mtx
 
+        gem_simulated = gene_mtx + delta_simulated
 
+        return gem_simulated
 
-    
 
     @staticmethod
     def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False):
