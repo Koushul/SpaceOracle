@@ -9,9 +9,6 @@ import torch.nn.functional as F
 class ViT(nn.Module):
     def __init__(self, betas, in_channels, spatial_dim, n_patches=16, n_blocks=2, hidden_d=8, n_heads=2):
         super().__init__()
-        
-        self.__version__ = 2.3
-        
         self.betas = betas
         self.dim = betas.shape[0] # number of TFs
 
@@ -21,7 +18,6 @@ class ViT(nn.Module):
         self.n_blocks = n_blocks
         self.n_heads = n_heads
         self.hidden_d = hidden_d
-        
         # Input and patches sizes
         assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
         assert chw[2] % n_patches == 0, "Input shape not entirely divisible by number of patches"
@@ -30,37 +26,30 @@ class ViT(nn.Module):
         self.input_d = int(chw[0] * self.patch_size[0] * self.patch_size[1])
         self.linear_mapper = nn.Linear(self.input_d, self.hidden_d)
         
-        self.class_token = nn.Parameter(torch.rand(1, self.hidden_d))       # Consider removing
-        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2 + 1, self.hidden_d))
+        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2, self.hidden_d))
         self.pos_embed.requires_grad = False
+        self.label_embed = nn.Embedding(in_channels, self.hidden_d) # for cell-type information
         
         self.blocks = nn.ModuleList([ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
         
-        # self.mlp = nn.Linear(self.hidden_d, self.dim)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(self.hidden_d, 32),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(32, 16),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(16, self.dim)
-        )
+        self.mlp = nn.Linear(self.hidden_d, self.dim)
 
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        
+
         tokens = self.linear_mapper(patches)
-        tokens = torch.cat((self.class_token.expand(n, 1, -1), tokens), dim=1)
-        out = tokens + self.pos_embed.repeat(n, 1, 1)
-        
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
+        out = tokens + pos_embed
         for block in self.blocks:
             out = block(out)
-            
-        # Get only the classification token
-        out = out[:, 0]
+
+        # Max pool over patches
+        out = torch.mean(out, dim=1)
+
+        label_embed = self.label_embed(inputs_labels)
+        label_embed = label_embed * 0.1                 # Scale down
+        out = label_embed + out
 
         # Pass through mlp to get betas
         betas = self.mlp(out)
@@ -81,6 +70,16 @@ class ViT(nn.Module):
             att_weights.append(att)
         
         return att_weights
+
+
+
+    def __str__(self):
+        # return ''
+        return f'VisionTransformer(in_channels={self.in_channels}, spatial_dim={self.spatial_dim}, n_patches={self.n_patches}, n_blocks={self.n_blocks}, hidden_d={self.hidden_d}, n_heads={self.n_heads})'
+
+    def __repr__(self):
+        return self.__str__()
+        
 
     
 
