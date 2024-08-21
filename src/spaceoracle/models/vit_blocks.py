@@ -7,10 +7,10 @@ import torch.nn.functional as F
 
 
 class ViT(nn.Module):
-    def __init__(self, betas, in_channels, spatial_dim, n_patches=16, n_blocks=2, hidden_d=8, n_heads=2):
+    def __init__(self, betas, in_channels, spatial_dim, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
         super().__init__()
         
-        self.__version__ = 2.3
+        self.__version__ = 5.0
         
         self.betas = betas
         self.dim = betas.shape[0] # number of TFs

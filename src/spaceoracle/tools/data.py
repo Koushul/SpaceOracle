@@ -45,18 +45,18 @@ class SpaceOracleDataset(SpatialDataset):
     """
 
     def __init__(self, adata, target_gene, regulators, spatial_dim=16, 
-    annot='rctd_cluster', rotate_maps=True):
+    annot='rctd_cluster', layer='normalized_count', rotate_maps=True):
 
         self.adata = adata
         
         self.target_gene = target_gene
         self.regulators = regulators
-
+        self.layer = layer
         self.spatial_dim = spatial_dim
         self.rotate_maps = rotate_maps
         
-        self.X = adata.to_df()[self.regulators].values
-        self.y = adata.to_df()[[self.target_gene]].values
+        self.X = adata.to_df(layer=layer)[self.regulators].values
+        self.y = adata.to_df(layer=layer)[[self.target_gene]].values
         self.clusters = np.array(self.adata.obs[annot])
         self.n_clusters = len(np.unique(self.clusters))
         self.xy = np.array(self.adata.obsm['spatial'])

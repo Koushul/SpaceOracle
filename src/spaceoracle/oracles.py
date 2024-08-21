@@ -16,6 +16,8 @@ import datetime
 import re
 import glob
 from random import shuffle
+from sklearn.decomposition import PCA
+import warnings
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
@@ -27,7 +29,119 @@ class Oracle(ABC):
     
     def __init__(self, adata):
         self.adata = adata.copy()
+        self.adata.layers['normalized_count'] = self.adata.X.copy()
+        self.perform_PCA()
+        self.knn_imputation()
         self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
+
+    def perform_PCA(self, n_components=None, div_by_std=False):
+        """Perform PCA (cells as samples)
+
+        Arguments
+        ---------
+        which: str, default="S_norm"
+            The name of the attribute to use for the calculation (e.g. S_norm or Sx_norm)
+        n_components: int, default=None
+            Number of components to keep. If None all the components will be kept.
+        div_by_std: bool, default=False
+            Wether to divide by standard deviation
+
+        Returns
+        -------
+        Returns nothing but it creates the attributes:
+        pca: np.ndarray
+            a numpy array of shape (cells, npcs)
+
+        """
+
+        X = _adata_to_matrix(self.adata, "normalized_count")
+        # X = self.adata.to_df().values.copy()
+
+        self.pca = PCA(n_components=n_components)
+        if div_by_std:
+            self.pcs = self.pca.fit_transform(X.T / X.std(0))
+        else:
+            self.pcs = self.pca.fit_transform(X.T)
+
+    def knn_imputation(self, k=None, metric="euclidean", diag=1,
+                       n_pca_dims=None, maximum=False,
+                       balanced=False, b_sight=None, b_maxl=None,
+                       group_constraint=None, n_jobs=8) -> None:
+        """Performs k-nn smoothing of the data matrix
+
+        Arguments
+        ---------
+        k: int
+            number of neighbors. If None the default it is chosen to be `0.025 * Ncells`
+        metric: str
+            "euclidean" or "correlation"
+        diag: int, default=1
+            before smoothing this value is substituted in the diagonal of the knn contiguity matrix
+            Resulting in a reduction of the smoothing effect.
+            E.g. if diag=8 and k=10 value of Si = (8 * S_i + sum(S_n, with n in 5nn of i)) / (8+5)
+        maximum: bool, default=False
+            If True the maximum value of the smoothing and the original matrix entry is taken.
+        n_pca_dims: int, default=None
+            number of pca to use for the knn distance metric. 
+            If None all pcs will be used. (used only if pca_space == True)
+        balanced: bool
+            whether to use BalancedKNN version
+        b_sight: int
+            the sight parameter of BalancedKNN (used only if balanced == True)
+        b_maxl: int
+            the maxl parameter of BalancedKNN (used only if balanced == True)
+
+        n_jobs: int, default 8
+            number of parallel jobs in knn calculation
+
+        Returns
+        -------
+        Nothing but it creates the attributes:
+        knn: scipy.sparse.csr_matrix
+            knn contiguity matrix
+        knn_smoothing_w: scipy.sparse.lil_matrix
+            the weights used for the smoothing
+        Sx: np.ndarray
+            smoothed spliced
+        Ux: np.ndarray
+            smoothed unspliced
+
+        """
+        X = _adata_to_matrix(self.adata, "normalized_count")
+
+        # X = self.adata.to_df().values.copy()
+        N = self.adata.shape[0] # cell number
+
+        if k is None:
+            k = int(N * 0.025)
+        if b_sight is None and balanced:
+            b_sight = int(k * 8)
+        if b_maxl is None and balanced:
+            b_maxl = int(k * 4)
+
+        space = self.pcs[:, :n_pca_dims]
+
+        if balanced:
+            bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
+                               metric=metric, mode="distance", n_jobs=n_jobs)
+            bknn.fit(space)
+            self.knn = bknn.kneighbors_graph(mode="distance")
+        else:
+
+            self.knn = knn_distance_matrix(space, metric=metric, k=k,
+                                           mode="distance", n_jobs=n_jobs)
+        connectivity = (self.knn > 0).astype(float)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            connectivity.setdiag(diag)
+        self.knn_smoothing_w = connectivity_to_weights(connectivity)
+
+        Xx = convolve_by_sparse_weights(X, self.knn_smoothing_w)
+        self.adata.layers["imputed_count"] = Xx.transpose().copy()
+
+        self.k_knn_imputation = k
+
+
         
 @dataclass
 class BetaOutput:
@@ -109,12 +223,21 @@ class SpaceOracle(Oracle):
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         self.save_dir = save_dir
-        # self.genes_with_regulators = [gene for gene in tqdm(self.adata.var_names) if len(self.grn.get_regulators(self.adata, gene)) > 0]
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
+        self.init_betas = init_betas
+        self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.rotate_maps = rotate_maps
+        self.regularize = regularize
+        self.n_patches = n_patches
+        self.n_heads = n_heads
+        self.n_blocks = n_blocks
+        self.hidden_d = hidden_d
 
         self.imbue_adata_with_space(
             self.adata, 
@@ -129,7 +252,8 @@ class SpaceOracle(Oracle):
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
 
-        # self.losses = pd.DataFrame(columns=genes)
+    
+    def run(self):
 
         _manager = enlighten.get_manager()
 
@@ -142,7 +266,7 @@ class SpaceOracle(Oracle):
         )
 
         train_bar = _manager.counter(
-            total=max_epochs, 
+            total=self.max_epochs, 
             desc='Training', 
             unit='epochs',
             color='red',
@@ -167,18 +291,18 @@ class SpaceOracle(Oracle):
 
                 estimator.fit(
                     annot=self.annot, 
-                    max_epochs=max_epochs, 
-                    learning_rate=learning_rate, 
+                    max_epochs=self.max_epochs, 
+                    learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
-                    batch_size=batch_size,
-                    init_betas=init_betas,
+                    batch_size=self.batch_size,
+                    init_betas=self.init_betas,
                     mode='train_test',
-                    rotate_maps=rotate_maps,
-                    regularize=regularize,
-                    n_patches=n_patches, 
-                    n_heads=n_heads, 
-                    n_blocks=n_blocks, 
-                    hidden_d=hidden_d,
+                    rotate_maps=self.rotate_maps,
+                    regularize=self.regularize,
+                    n_patches=self.n_patches, 
+                    n_heads=self.n_heads, 
+                    n_blocks=self.n_blocks, 
+                    hidden_d=self.hidden_d,
                     pbar=train_bar
                 )
 
@@ -306,7 +430,57 @@ class SpaceOracle(Oracle):
             return
 
         return sp_maps
-    
 
+from sklearn.neighbors import kneighbors_graph, NearestNeighbors
+from scipy import sparse
     
+def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
+    """Calculate a nearest neighbour distance matrix
 
+    Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
+    To achieve that we call kneighbors_graph with X = None
+    """
+    if metric == "correlation":
+        nn = NearestNeighbors(n_neighbors=k, metric="correlation", algorithm="brute", n_jobs=n_jobs)
+        nn.fit(data)
+        return nn.kneighbors_graph(X=None, mode=mode)
+    else:
+        nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
+        nn.fit(data)
+        return nn.kneighbors_graph(X=None, mode=mode)
+
+
+def connectivity_to_weights(mknn, axis=1):
+    if type(mknn) is not sparse.csr_matrix:
+        mknn = mknn.tocsr()
+    return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
+
+def convolve_by_sparse_weights(data, w):
+    w_ = w.T
+    assert np.allclose(w_.sum(0), 1), "weight matrix need to sum to one over the columns"
+    return sparse.csr_matrix.dot(data, w_)
+
+
+def _adata_to_matrix(adata, layer_name, transpose=True):
+    """
+    Extract an numpy array from adata and returns as numpy matrix.
+
+    Args:
+        adata (anndata): anndata
+
+        layer_name (str): name of layer in anndata
+
+        trabspose (bool) : if True, it returns transposed array.
+
+    Returns:
+        2d numpy array: numpy array
+    """
+    if isinstance(adata.layers[layer_name], np.ndarray):
+        matrix = adata.layers[layer_name].copy()
+    else:
+        matrix = adata.layers[layer_name].todense().A.copy()
+
+    if transpose:
+        matrix = matrix.transpose()
+
+    return matrix.copy(order="C")

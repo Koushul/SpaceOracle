@@ -201,7 +201,7 @@ class VisionEstimator(Estimator):
         
     @staticmethod
     def _build_dataloaders_from_adata(adata, target_gene, regulators, batch_size=32, 
-    mode='train', rotate_maps=True, annot='rctd_cluster', spatial_dim=64, test_size=0.2):
+    mode='train', rotate_maps=True, annot='rctd_cluster', layer='normalized_count', spatial_dim=64, test_size=0.2):
 
         assert mode in ['train', 'train_test']
         set_seed(42)
@@ -226,6 +226,7 @@ class VisionEstimator(Estimator):
             target_gene=target_gene, 
             regulators=regulators, 
             annot=annot, 
+            layer=layer,
             spatial_dim=spatial_dim,
             rotate_maps=rotate_maps
         )
@@ -423,7 +424,7 @@ class SpatialInsights(VisionEstimator):
         learning_rate,
         rotate_maps,
         regularize,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
+        n_patches=2, n_blocks=4, hidden_d=14, n_heads=2,
         pbar=None
         ):
 
@@ -496,7 +497,7 @@ class SpatialInsights(VisionEstimator):
         mode='train',
         regularize=False,
         rotate_maps=True,
-        n_patches=16, n_blocks=2, hidden_d=8, n_heads=2,
+        n_patches=2, n_blocks=2, hidden_d=16, n_heads=2,
         pbar=None
         ):
         
