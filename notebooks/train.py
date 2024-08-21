@@ -15,7 +15,7 @@ print(device)
 so = spaceoracle.SpaceOracle(
     adata_train, 
     init_betas='ones', 
-    spatial_dim=32,
-    max_epochs=10, 
-    learning_rate=3e-2
+    spatial_dim=64,
+    max_epochs=100, 
+    learning_rate=3e-3
 )

@@ -45,7 +45,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
             u, v = np.unravel_index(nearest_center_idx, (m, n))
             mask[int(cluster)][u, v] = 1
 
-            spatial_maps[s] = dist_map.astype(np.float16)
+            spatial_maps[s] = dist_map
             
             pbar.update()
     
