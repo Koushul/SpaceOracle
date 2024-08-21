@@ -266,7 +266,7 @@ class SpaceOracle(Oracle):
             train_bar.start = time.time()
 
     @staticmethod
-    def load_estimator(self, gene):
+    def load_estimator(gene):
         # assert gene in self.trained_genes
         # assert gene in self.adata.var_names
         with open(f'./models/{gene}_estimator.pkl', 'rb') as f:
