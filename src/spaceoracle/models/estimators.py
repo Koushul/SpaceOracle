@@ -560,7 +560,7 @@ class SpatialInsights(VisionEstimator):
 
 
     def export(self):
-        # self.model.eval()
+        self.model.eval()
         # self.model.cpu()
         return self.model, self.regulators, self.target_gene
 
