@@ -11,7 +11,7 @@ from utils import adata_train, adata_test
 so = spaceoracle.SpaceOracle(
     adata_train, 
     init_betas='ones', 
-    max_epochs=100, 
+    max_epochs=25, 
     learning_rate=3e-4, 
     spatial_dim=64,
     batch_size=128,
