@@ -1,3 +1,5 @@
+print('init...')
+
 import sys
 sys.path.append('../src')
 import warnings
