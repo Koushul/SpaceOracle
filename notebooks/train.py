@@ -8,12 +8,12 @@ import spaceoracle
 from spaceoracle.models.estimators import ViTEstimatorV2, device
 from utils import adata_train, adata_test
 
-print(device)
-
 so = spaceoracle.SpaceOracle(
     adata_train, 
     init_betas='ones', 
-    spatial_dim=32,
-    max_epochs=10, 
-    learning_rate=3e-2
+    max_epochs=100, 
+    learning_rate=3e-4, 
+    spatial_dim=64,
+    batch_size=128,
+    n_patches=2, n_heads=2, n_blocks=4, hidden_d=16
 )

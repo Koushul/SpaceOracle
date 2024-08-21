@@ -39,7 +39,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
         for s, coord in enumerate(xyc):
             x_, y_, cluster = coord
             
-            dist_map = np.array([distance((x_, y_), c) for c in centers]).reshape(m, n)
+            dist_map = np.array([np.float16(distance((x_, y_), c)) for c in centers]).reshape(m, n).astype(np.float16)
             
             nearest_center_idx = np.argmin(dist_map)
             u, v = np.unravel_index(nearest_center_idx, (m, n))
