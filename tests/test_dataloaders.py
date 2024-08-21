@@ -23,6 +23,7 @@ class TestSpaceOracleDataset(unittest.TestCase):
         obsm = {'spatial': np.random.rand(n_obs, 2)}
         
         self.adata = anndata.AnnData(X=X, obs=obs, var=var, obsm=obsm)
+        self.adata.layers['normalized_count'] = X
         self.adata.var_names = self.adata.var['gene_symbols']
 
     def test_spaceoracle_dataset(self):
