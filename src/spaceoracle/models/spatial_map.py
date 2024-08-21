@@ -20,7 +20,7 @@ def generate_grid_centers(m, n, xmin, xmax, ymin, ymax):
 def distance(point1, point2):
     x1, y1 = point1
     x2, y2 = point2
-    return np.float16(np.sqrt((x2 - x1)**2 + (y2 - y1)**2))
+    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
 
 def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
@@ -39,7 +39,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
         for s, coord in enumerate(xyc):
             x_, y_, cluster = coord
             
-            dist_map = np.array([distance((x_, y_), c) for c in centers]).reshape(m, n).astype(np.float16)
+            dist_map = np.array([np.float16(distance((x_, y_), c)) for c in centers]).reshape(m, n).astype(np.float16)
             
             nearest_center_idx = np.argmin(dist_map)
             u, v = np.unravel_index(nearest_center_idx, (m, n))
