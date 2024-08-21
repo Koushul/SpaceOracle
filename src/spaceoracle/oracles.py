@@ -18,6 +18,8 @@ import glob
 from random import shuffle
 from sklearn.decomposition import PCA
 import warnings
+from sklearn.neighbors import kneighbors_graph, NearestNeighbors
+from scipy import sparse
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
@@ -34,28 +36,9 @@ class Oracle(ABC):
         self.knn_imputation()
         self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
 
+    ## canibalized from CellOracle
     def perform_PCA(self, n_components=None, div_by_std=False):
-        """Perform PCA (cells as samples)
-
-        Arguments
-        ---------
-        which: str, default="S_norm"
-            The name of the attribute to use for the calculation (e.g. S_norm or Sx_norm)
-        n_components: int, default=None
-            Number of components to keep. If None all the components will be kept.
-        div_by_std: bool, default=False
-            Wether to divide by standard deviation
-
-        Returns
-        -------
-        Returns nothing but it creates the attributes:
-        pca: np.ndarray
-            a numpy array of shape (cells, npcs)
-
-        """
-
         X = _adata_to_matrix(self.adata, "normalized_count")
-        # X = self.adata.to_df().values.copy()
 
         self.pca = PCA(n_components=n_components)
         if div_by_std:
@@ -63,53 +46,14 @@ class Oracle(ABC):
         else:
             self.pcs = self.pca.fit_transform(X.T)
 
+    ## canibalized from CellOracle
     def knn_imputation(self, k=None, metric="euclidean", diag=1,
                        n_pca_dims=None, maximum=False,
                        balanced=False, b_sight=None, b_maxl=None,
                        group_constraint=None, n_jobs=8) -> None:
-        """Performs k-nn smoothing of the data matrix
-
-        Arguments
-        ---------
-        k: int
-            number of neighbors. If None the default it is chosen to be `0.025 * Ncells`
-        metric: str
-            "euclidean" or "correlation"
-        diag: int, default=1
-            before smoothing this value is substituted in the diagonal of the knn contiguity matrix
-            Resulting in a reduction of the smoothing effect.
-            E.g. if diag=8 and k=10 value of Si = (8 * S_i + sum(S_n, with n in 5nn of i)) / (8+5)
-        maximum: bool, default=False
-            If True the maximum value of the smoothing and the original matrix entry is taken.
-        n_pca_dims: int, default=None
-            number of pca to use for the knn distance metric. 
-            If None all pcs will be used. (used only if pca_space == True)
-        balanced: bool
-            whether to use BalancedKNN version
-        b_sight: int
-            the sight parameter of BalancedKNN (used only if balanced == True)
-        b_maxl: int
-            the maxl parameter of BalancedKNN (used only if balanced == True)
-
-        n_jobs: int, default 8
-            number of parallel jobs in knn calculation
-
-        Returns
-        -------
-        Nothing but it creates the attributes:
-        knn: scipy.sparse.csr_matrix
-            knn contiguity matrix
-        knn_smoothing_w: scipy.sparse.lil_matrix
-            the weights used for the smoothing
-        Sx: np.ndarray
-            smoothed spliced
-        Ux: np.ndarray
-            smoothed unspliced
-
-        """
+        
         X = _adata_to_matrix(self.adata, "normalized_count")
 
-        # X = self.adata.to_df().values.copy()
         N = self.adata.shape[0] # cell number
 
         if k is None:
@@ -321,9 +265,10 @@ class SpaceOracle(Oracle):
             train_bar.count = 0
             train_bar.start = time.time()
 
-
+    @staticmethod
     def load_estimator(self, gene):
-        assert gene in self.trained_genes
+        # assert gene in self.trained_genes
+        # assert gene in self.adata.var_names
         with open(f'./models/{gene}_estimator.pkl', 'rb') as f:
             return pickle.load(f)
 
@@ -431,8 +376,7 @@ class SpaceOracle(Oracle):
 
         return sp_maps
 
-from sklearn.neighbors import kneighbors_graph, NearestNeighbors
-from scipy import sparse
+
     
 def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
     """Calculate a nearest neighbour distance matrix
@@ -462,19 +406,6 @@ def convolve_by_sparse_weights(data, w):
 
 
 def _adata_to_matrix(adata, layer_name, transpose=True):
-    """
-    Extract an numpy array from adata and returns as numpy matrix.
-
-    Args:
-        adata (anndata): anndata
-
-        layer_name (str): name of layer in anndata
-
-        trabspose (bool) : if True, it returns transposed array.
-
-    Returns:
-        2d numpy array: numpy array
-    """
     if isinstance(adata.layers[layer_name], np.ndarray):
         matrix = adata.layers[layer_name].copy()
     else:
