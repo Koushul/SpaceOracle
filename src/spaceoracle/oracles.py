@@ -9,6 +9,13 @@ import pickle
 import torch
 from dataclasses import dataclass
 from typing import List
+from tqdm import tqdm
+import os
+import shutil
+import datetime
+import re
+import glob
+from random import shuffle
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
@@ -23,31 +30,98 @@ class Oracle(ABC):
         self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
         
 @dataclass
-class OracleOutput:
+class BetaOutput:
     betas: np.ndarray
     regulators: List[str]
     target_gene: str
     target_gene_index: int
     regulators_index: List[int]
 
+
+class OracleQueue:
+
+    def __init__(self, model_dir, all_genes):
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir)
+        self.model_dir = model_dir
+        self.all_genes = all_genes
+        self.orphans = []
+
+    @property
+    def regulated_genes(self):
+        if not self.orphans:
+            return self.all_genes
+        return list(set(self.all_genes).difference(set(self.orphans)))
+    
+    def __getitem__(self, index):
+        return self.remaining_genes[index]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.is_empty:
+            raise StopIteration
+        return np.random.choice(self.remaining_genes)
+
+    def __len__(self):
+        return len(self.remaining_genes)
+        
+    @property
+    def is_empty(self):
+        return self.__len__() == 0
+
+    @property
+    def remaining_genes(self):
+        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        locked_paths = glob.glob(f'{self.model_dir}/*.lock')
+        completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
+        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
+        return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
+
+    def create_lock(self, gene):
+        assert not os.path.exists(f'{self.model_dir}/{gene}.lock')
+        now = str(datetime.datetime.now())
+        with open(f'{self.model_dir}/{gene}.lock', 'w') as f:
+            f.write(now)
+
+    def delete_lock(self, gene):
+        assert os.path.exists(f'{self.model_dir}/{gene}.lock')
+        os.remove(f'{self.model_dir}/{gene}.lock')
+
+    def add_orphan(self, gene):
+        self.orphans.append(gene)
+
+    @staticmethod
+    def extract_gene_name(path):
+        match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        return match.group(1) if match else None
+
+
+
+
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, annot='rctd_cluster', init_betas='ols', 
-    max_epochs=10, spatial_dim=64, learning_rate=3e-4, batch_size=32, rotate_maps=True, 
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='ols', 
+    max_epochs=100, spatial_dim=64, learning_rate=3e-4, batch_size=16, rotate_maps=True, 
     regularize=False, n_patches=2, n_heads=8, n_blocks=4, hidden_d=16):
         
         super().__init__(adata)
+        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        self.save_dir = save_dir
+        # self.genes_with_regulators = [gene for gene in tqdm(self.adata.var_names) if len(self.grn.get_regulators(self.adata, gene)) > 0]
+
+        self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
+
         self.annot = annot
         self.spatial_dim = spatial_dim
+
         self.imbue_adata_with_space(
             self.adata, 
             annot=self.annot,
             spatial_dim=self.spatial_dim,
             in_place=True
         )
-        
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        
 
         self.estimator_models = {}
         self.regulators = {}
@@ -60,7 +134,7 @@ class SpaceOracle(Oracle):
         _manager = enlighten.get_manager()
 
         gene_bar = _manager.counter(
-            total=len(self.genes), 
+            total=len(self.queue.all_genes), 
             desc='Estimating betas', 
             unit='genes',
             color='green',
@@ -75,14 +149,21 @@ class SpaceOracle(Oracle):
             autorefresh=True,
         )
 
+        while not self.queue.is_empty:
+            gene = next(self.queue)
 
-        for i in self.genes:
-            gene_bar.desc = f'Estimating betas for {i}'
-            gene_bar.refresh()
+            estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            estimator = ViTEstimatorV2(self.adata, target_gene=i)
+            if len(estimator.regulators) == 0:
+                self.queue.add_orphan(gene)
+                continue
 
-            if len(estimator.regulators) > 0:
+            else:
+                gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
+                gene_bar.desc = f'{len(self.queue.orphans)} orphans'
+                gene_bar.refresh()
+
+                self.queue.create_lock(gene)
 
                 estimator.fit(
                     annot=self.annot, 
@@ -102,13 +183,17 @@ class SpaceOracle(Oracle):
                 )
 
                 model, regulators, target_gene = estimator.export()
-                assert target_gene == i
+                assert target_gene == gene
 
-                with open(f'./models/{target_gene}_estimator.pkl', 'wb') as f:
+                with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
                     pickle.dump({'model': model, 'regulators': regulators}, f)
                     self.trained_genes.append(target_gene)
+                    self.queue.delete_lock(gene)
+                    del model
 
-            gene_bar.update()
+            gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
+            gene_bar.refresh()
+
             train_bar.count = 0
             train_bar.start = time.time()
 
@@ -125,15 +210,14 @@ class SpaceOracle(Oracle):
         assert self.annot in adata.obs.columns
         assert 'spatial_maps' in adata.obsm.keys()
 
-
         estimator_dict = self.load_estimator(target_gene)
         estimator_dict['model'].eval()
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
 
-        return OracleOutput(
-            betas=estimator_dict['model'].forward(input_spatial_maps, input_cluster_labels).cpu().numpy(),
+        return BetaOutput(
+            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
@@ -141,24 +225,68 @@ class SpaceOracle(Oracle):
         )
 
 
+    def _update_sparse_tensor(self, sparse_tensor, beta_output):
+        assert isinstance(beta_output, BetaOutput)
+
+        for k in range(len(beta_output.regulators_index)):
+            indices = torch.tensor(
+                [[
+                    beta_output.regulators_index[k], 
+                    beta_output.target_gene_index, i] 
+                        for i in range(beta_output.betas.shape[0])
+                ], dtype=torch.long)
+
+            values = beta_output.betas[:, k+1]
+            new_sparse_tensor = torch.sparse_coo_tensor(indices.t(), values, sparse_tensor.size())
+            sparse_tensor = sparse_tensor + new_sparse_tensor
+
+        return sparse_tensor
+
 
     def get_coef_matrix(self, adata):
-        gem = adata.to_df()
-        genes = gem.columns
-        all_genes_in_dict = intersect(gem.columns, list(TFdict.keys()))
-        zero_ = pd.Series(np.zeros(len(genes)), index=genes)
+        num_genes = len(adata.var_names)
+        indices = torch.empty((3, 0), dtype=torch.long)
+        values = torch.empty(0)
+        
+        sparse_tensor = torch.sparse_coo_tensor(
+            indices, values, (num_genes, num_genes, adata.shape[0]))
+
+        for gene in tqdm(self.trained_genes):
+            beta_out = self._get_betas(adata, gene) # cell x beta+1
+            sparse_tensor = self._update_sparse_tensor(sparse_tensor, beta_out) # gene x gene x cell
+
+        return sparse_tensor
 
 
+    def perturb(self, gene_mtx, sparse_tensor, n_propagation=3):
+        assert sparse_tensor.shape == (gene_mtx.shape[1], gene_mtx.shape[1], gene_mtx.shape[0])
+        
+        simulation_input = gene_mtx.copy()
 
+        for i in [74]:
+            simulation_input[i] = 0
 
+        delta_input = simulation_input - gene_mtx
 
-        NotImplementedError
+        delta_simulated = delta_input.copy()
+        
+        for i in range(n_propagation):
+            delta_simulated = torch.concat([torch.sparse.mm(
+                    sparse_tensor[..., i], 
+                    torch.from_numpy(delta_simulated)[i].view(delta_simulated.shape[1], 1)
+                ) for i in tqdm(range(delta_simulated.shape[0]))], dim=1).numpy().reshape(gene_mtx.shape[0], gene_mtx.shape[1])
 
+            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
 
+            
+            gem_tmp = gene_mtx + delta_simulated
+            gem_tmp[gem_tmp<0] = 0
+            delta_simulated = gem_tmp - gene_mtx
 
+        gem_simulated = gene_mtx + delta_simulated
 
+        return gem_simulated
 
-    
 
     @staticmethod
     def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False):

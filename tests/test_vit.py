@@ -110,8 +110,10 @@ def test_vit_with_real_data():
     adata_test = adata_test[:, adata_test.var.highly_variable]
     
 
-    adata_train = adata_train[:, adata_train.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
-    adata_test = adata_test[:, adata_test.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
+    adata_train = adata_train[:, adata_train.var_names.isin(
+        np.intersect1d(adata_train.var_names, adata_test.var_names))]
+    adata_test = adata_test[:, adata_test.var_names.isin(
+        np.intersect1d(adata_train.var_names, adata_test.var_names))]
 
     estimator = ViTEstimatorV2(adata_train, target_gene='Cd74')
     assert len(estimator.regulators) == 15
