@@ -39,6 +39,12 @@ class ViT(nn.Module):
         
         # self.mlp = nn.Linear(self.hidden_d, self.dim)
 
+        self.cluster_embed = nn.Sequential(
+            nn.Embedding(self.in_channels, self.hidden_d),
+            nn.Linear(self.hidden_d, self.hidden_d),
+            nn.ReLU()
+        )
+
         self.mlp = nn.Sequential(
             nn.Linear(self.hidden_d, 32),
             nn.GELU(),
@@ -58,13 +64,16 @@ class ViT(nn.Module):
         out = tokens + self.pos_embed.repeat(n, 1, 1)
         
         for block in self.blocks:
-            out = block(out)
+            out = block(out) 
             
         # Get only the classification token
         out = out[:, 0]
 
-        # Pass through mlp to get betas
+        emb = self.cluster_embed(inputs_labels)
+        out = out + 5e-2 * emb # weigh down the cluster embeddings
+        
         betas = self.mlp(out)
+
         return betas
         
     

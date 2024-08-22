@@ -1,6 +1,8 @@
 from numba import jit
 from tqdm import tqdm
 import numpy as np
+from scipy.ndimage import gaussian_filter
+
 from ..tools.utils import deprecated
 
 @jit
@@ -39,7 +41,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
         for s, coord in enumerate(xyc):
             x_, y_, cluster = coord
             
-            dist_map = np.array([np.float16(distance((x_, y_), c)) for c in centers]).reshape(m, n).astype(np.float16)
+            dist_map = np.array([np.float32(distance((x_, y_), c)) for c in centers]).reshape(m, n).astype(np.float32)
             
             nearest_center_idx = np.argmin(dist_map)
             u, v = np.unravel_index(nearest_center_idx, (m, n))
@@ -55,6 +57,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
 
     # channel_wise_maps = spatial_maps*mask 
     channel_wise_maps = (1.0/spatial_maps)*mask 
+    channel_wise_maps = gaussian_filter(channel_wise_maps, sigma=0.5)
     
 
         
