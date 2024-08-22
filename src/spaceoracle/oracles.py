@@ -28,6 +28,10 @@ from .models.estimators import ViTEstimatorV2, ViT, device
 import pickle
 import io
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+
 class CPU_Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
         if module == 'torch.storage' and name == '_load_from_bytes':
@@ -142,6 +146,11 @@ class OracleQueue:
     @property
     def is_empty(self):
         return self.__len__() == 0
+
+    @property
+    def completed_genes(self):
+        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
     def remaining_genes(self):
@@ -293,7 +302,7 @@ class SpaceOracle(Oracle):
         assert 'spatial_maps' in adata.obsm.keys()
 
         estimator_dict = self.load_estimator(target_gene, self.save_dir)
-        estimator_dict['model'].eval()
+        estimator_dict['model'].to(device).eval()
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
@@ -333,7 +342,7 @@ class SpaceOracle(Oracle):
         sparse_tensor = torch.sparse_coo_tensor(
             indices, values, (num_genes, num_genes, adata.shape[0]))
 
-        for gene in tqdm(self.trained_genes):
+        for gene in tqdm(self.queue.completed_genes):
             beta_out = self._get_betas(adata, gene) # cell x beta+1
             sparse_tensor = self._update_sparse_tensor(sparse_tensor, beta_out) # gene x gene x cell
 
