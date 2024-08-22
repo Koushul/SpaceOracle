@@ -17,3 +17,5 @@ so = spaceoracle.SpaceOracle(
     batch_size=128,
     n_patches=2, n_heads=2, n_blocks=4, hidden_d=16
 )
+
+so.run()
