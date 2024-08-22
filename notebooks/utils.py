@@ -46,3 +46,6 @@ adata_test = adata_test[:, adata_test.var.highly_variable]
 
 adata_train = adata_train[:, adata_train.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
 adata_test = adata_test[:, adata_test.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
+
+adata_train.layers["normalized_count"] = adata_train.to_df().values
+adata_test.layers["normalized_count"] = adata_test.to_df().values

@@ -25,36 +25,52 @@ from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
 from .models.estimators import ViTEstimatorV2, ViT, device
 
+import pickle
+import io
 
+class CPU_Unpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if module == 'torch.storage' and name == '_load_from_bytes':
+            return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+        else:
+            return super().find_class(module, name)
 
 class Oracle(ABC):
     
     def __init__(self, adata):
+        assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
-        self.perform_PCA()
-        self.knn_imputation()
-        self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
+        self.pcs = self.perform_PCA(self.adata)
+        self.knn_imputation(self.adata, self.pcs)
+        self.gene2index = dict(zip(
+                self.adata.var_names, 
+                range(len(self.adata.var_names))
+            ))
 
     ## canibalized from CellOracle
-    def perform_PCA(self, n_components=None, div_by_std=False):
-        X = _adata_to_matrix(self.adata, "normalized_count")
+    @staticmethod
+    def perform_PCA(adata, n_components=None, div_by_std=False):
+        X = _adata_to_matrix(adata, "normalized_count")
 
-        self.pca = PCA(n_components=n_components)
+        pca = PCA(n_components=n_components)
         if div_by_std:
-            self.pcs = self.pca.fit_transform(X.T / X.std(0))
+            pcs = pca.fit_transform(X.T / X.std(0))
         else:
-            self.pcs = self.pca.fit_transform(X.T)
+            pcs = pca.fit_transform(X.T)
+
+        return pcs
 
     ## canibalized from CellOracle
-    def knn_imputation(self, k=None, metric="euclidean", diag=1,
+    @staticmethod
+    def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=None, maximum=False,
                        balanced=False, b_sight=None, b_maxl=None,
                        group_constraint=None, n_jobs=8) -> None:
         
-        X = _adata_to_matrix(self.adata, "normalized_count")
+        X = _adata_to_matrix(adata, "normalized_count")
 
-        N = self.adata.shape[0] # cell number
+        N = adata.shape[0] # cell number
 
         if k is None:
             k = int(N * 0.025)
@@ -63,28 +79,26 @@ class Oracle(ABC):
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
 
-        space = self.pcs[:, :n_pca_dims]
+
+        space = pcs[:, :n_pca_dims]
 
         if balanced:
             bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
                                metric=metric, mode="distance", n_jobs=n_jobs)
             bknn.fit(space)
-            self.knn = bknn.kneighbors_graph(mode="distance")
+            knn = bknn.kneighbors_graph(mode="distance")
         else:
 
-            self.knn = knn_distance_matrix(space, metric=metric, k=k,
+            knn = knn_distance_matrix(space, metric=metric, k=k,
                                            mode="distance", n_jobs=n_jobs)
-        connectivity = (self.knn > 0).astype(float)
+        connectivity = (knn > 0).astype(float)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             connectivity.setdiag(diag)
-        self.knn_smoothing_w = connectivity_to_weights(connectivity)
+        knn_smoothing_w = connectivity_to_weights(connectivity)
 
-        Xx = convolve_by_sparse_weights(X, self.knn_smoothing_w)
-        self.adata.layers["imputed_count"] = Xx.transpose().copy()
-
-        self.k_knn_imputation = k
-
+        Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
+        adata.layers["imputed_count"] = Xx.transpose().copy()
 
         
 @dataclass
@@ -266,11 +280,10 @@ class SpaceOracle(Oracle):
             train_bar.start = time.time()
 
     @staticmethod
-    def load_estimator(gene):
-        # assert gene in self.trained_genes
-        # assert gene in self.adata.var_names
-        with open(f'./models/{gene}_estimator.pkl', 'rb') as f:
-            return pickle.load(f)
+    def load_estimator(gene, save_dir):
+        with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
+            # return pickle.load(f)
+            return CPU_Unpickler(f).load()
 
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):

@@ -40,7 +40,7 @@ class ViT(nn.Module):
         # self.mlp = nn.Linear(self.hidden_d, self.dim)
 
         self.cluster_embed = nn.Sequential(
-            nn.Embedding(self.dim, self.hidden_d),
+            nn.Embedding(self.in_channels, self.hidden_d),
             nn.Linear(self.hidden_d, self.hidden_d),
             nn.ReLU()
         )
