@@ -296,7 +296,6 @@ class SpaceOracle(Oracle):
 
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
-        assert target_gene in self.trained_genes
         assert target_gene in adata.var_names
         assert self.annot in adata.obs.columns
         assert 'spatial_maps' in adata.obsm.keys()
