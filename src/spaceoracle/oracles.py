@@ -283,7 +283,7 @@ class SpaceOracle(Oracle):
     def load_estimator(gene, save_dir):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
             # return pickle.load(f)
-            return CPU_Unpickler(f).load()
+            return CPU_Unpickler(f).load().to(device)
 
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
@@ -292,7 +292,7 @@ class SpaceOracle(Oracle):
         assert self.annot in adata.obs.columns
         assert 'spatial_maps' in adata.obsm.keys()
 
-        estimator_dict = self.load_estimator(target_gene)
+        estimator_dict = self.load_estimator(target_gene, self.save_dir)
         estimator_dict['model'].eval()
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
