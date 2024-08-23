@@ -45,7 +45,7 @@ class SpaceOracleDataset(SpatialDataset):
     """
 
     def __init__(self, adata, target_gene, regulators, spatial_dim=16, 
-    annot='rctd_cluster', layer='normalized_count', rotate_maps=True):
+    annot='rctd_cluster', layer='imputed_count', rotate_maps=True):
 
         self.adata = adata
         
@@ -79,7 +79,6 @@ class SpaceOracleDataset(SpatialDataset):
         sp_map = self.spatial_maps[index]
         if self.rotate_maps:
             k = np.random.choice([0, 1, 2, 3])
-            # k = np.random.choice([0, 1])
             sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
         spatial_info = torch.from_numpy(sp_map.copy()).float()
         tf_exp = torch.from_numpy(self.X[index].copy()).float()

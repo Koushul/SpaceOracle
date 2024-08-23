@@ -201,7 +201,7 @@ class VisionEstimator(Estimator):
         
     @staticmethod
     def _build_dataloaders_from_adata(adata, target_gene, regulators, batch_size=32, 
-    mode='train', rotate_maps=True, annot='rctd_cluster', layer='normalized_count', spatial_dim=64, test_size=0.2):
+    mode='train', rotate_maps=True, annot='rctd_cluster', layer='imputed_count', spatial_dim=64, test_size=0.2):
 
         assert mode in ['train', 'train_test']
         set_seed(42)

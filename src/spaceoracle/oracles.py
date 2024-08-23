@@ -20,6 +20,8 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.neighbors import kneighbors_graph, NearestNeighbors
 from scipy import sparse
+from numba import jit
+from sklearn.linear_model import Ridge
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
@@ -205,6 +207,8 @@ class SpaceOracle(Oracle):
         self.n_heads = n_heads
         self.n_blocks = n_blocks
         self.hidden_d = hidden_d
+        self.beta_dict = None
+        self.coef_matrix = None
 
         self.imbue_adata_with_space(
             self.adata, 
@@ -315,65 +319,57 @@ class SpaceOracle(Oracle):
         )
 
 
-    def _update_sparse_tensor(self, sparse_tensor, beta_output):
-        assert isinstance(beta_output, BetaOutput)
-
-        for k in range(len(beta_output.regulators_index)):
-            indices = torch.tensor(
-                [[
-                    beta_output.regulators_index[k], 
-                    beta_output.target_gene_index, i] 
-                        for i in range(beta_output.betas.shape[0])
-                ], dtype=torch.long)
-
-            values = beta_output.betas[:, k+1]
-            new_sparse_tensor = torch.sparse_coo_tensor(indices.t(), values, sparse_tensor.size())
-            sparse_tensor = sparse_tensor + new_sparse_tensor
-
-        return sparse_tensor
-
-
-    def get_coef_matrix(self, adata):
-        num_genes = len(adata.var_names)
-        indices = torch.empty((3, 0), dtype=torch.long)
-        values = torch.empty(0)
+    def _get_betas_dict(self):
+        beta_dict = {}
+        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
+            beta_dict[gene] = self._get_betas(self.adata, gene)
         
-        sparse_tensor = torch.sparse_coo_tensor(
-            indices, values, (num_genes, num_genes, adata.shape[0]))
-
-        for gene in tqdm(self.queue.completed_genes):
-            beta_out = self._get_betas(adata, gene) # cell x beta+1
-            sparse_tensor = self._update_sparse_tensor(sparse_tensor, beta_out) # gene x gene x cell
-
-        return sparse_tensor
+        return beta_dict
 
 
-    def perturb(self, gene_mtx, sparse_tensor, n_propagation=3):
-        assert sparse_tensor.shape == (gene_mtx.shape[1], gene_mtx.shape[1], gene_mtx.shape[0])
+    def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
+
+        genes = self.adata.var_names
         
+        gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
+
+        for i, gene in enumerate(genes):
+            _beta_out = betas_dict.get(gene, None)
+            
+            if _beta_out is not None:
+                r = np.array(_beta_out.regulators_index)
+                gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+
+        return gex_delta[cell_index, :].dot(gene_gene_matrix)
+
+
+    def perturb(self, gene_mtx, target, n_propagation=3):
+        assert target in self.adata.var_names
+
+        target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        for i in [74]:
-            simulation_input[i] = 0
+        simulation_input[:, target_index] = 0 # ko target gene
+        delta_input = simulation_input - gene_mtx # get delta X
+        delta_simulated = delta_input.copy() 
 
-        delta_input = simulation_input - gene_mtx
-
-        delta_simulated = delta_input.copy()
+        if self.beta_dict is None:
+            self.beta_dict = self._get_betas_dict() # compute betas for all genes for all cells
         
-        for i in range(n_propagation):
-            delta_simulated = torch.concat([torch.sparse.mm(
-                    sparse_tensor[..., i], 
-                    torch.from_numpy(delta_simulated)[i].view(delta_simulated.shape[1], 1)
-                ) for i in tqdm(range(delta_simulated.shape[0]))], dim=1).numpy().reshape(gene_mtx.shape[0], gene_mtx.shape[1])
-
+        for n in range(n_propagation):
+            _simulated = np.array(
+                [self._perturb_single_cell(delta_simulated, i, self.beta_dict) 
+                    for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
+            delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
 
-            
             gem_tmp = gene_mtx + delta_simulated
             gem_tmp[gem_tmp<0] = 0
             delta_simulated = gem_tmp - gene_mtx
 
         gem_simulated = gene_mtx + delta_simulated
+        
+        assert gem_simulated.shape == gene_mtx.shape
 
         return gem_simulated
 
@@ -398,7 +394,78 @@ class SpaceOracle(Oracle):
         return sp_maps
 
 
-    
+
+    def _getCoefMatrix(self, alpha=1):
+
+        gem = self.adata.to_df(layer='normalized_count')
+        genes = self.adata.var_names
+        
+        zero_ = pd.Series(np.zeros(len(genes)), index=genes)
+
+        def get_coef(target_gene):
+            tmp = zero_.copy()
+
+            reggenes = self.grn.get_regulators(self.adata, target_gene)
+
+            if target_gene in reggenes:
+                reggenes.remove(target_gene)
+            if len(reggenes) == 0 :
+                tmp[target_gene] = 0
+                return(tmp)
+            
+            Data = gem[reggenes]
+            Label = gem[target_gene]
+            model = Ridge(alpha=alpha, random_state=123)
+            model.fit(Data, Label)
+            tmp[reggenes] = model.coef_
+
+            return tmp
+
+        li = []
+        li_calculated = []
+        with tqdm(genes) as pbar:
+            for i in pbar:
+                if not i in self.queue.completed_genes:
+                    tmp = zero_.copy()
+                    tmp[i] = 0
+                else:
+                    tmp = get_coef(i)
+                    li_calculated.append(i)
+                li.append(tmp)
+        coef_matrix = pd.concat(li, axis=1)
+        coef_matrix.columns = genes
+
+        return coef_matrix
+
+
+    def perturb_via_celloracle(self, gene_mtx, target, n_propagation=3):
+        
+        target_index = self.gene2index[target]  
+        simulation_input = gene_mtx.copy()
+
+        simulation_input[target] = 0 # ko target gene
+        delta_input = simulation_input - gene_mtx # get delta X
+        delta_simulated = delta_input.copy() 
+
+        if self.coef_matrix is None:
+            self.coef_matrix = self._getCoefMatrix()
+        
+
+        for i in range(n_propagation):
+            delta_simulated = delta_simulated.dot(self.coef_matrix)
+            delta_simulated[delta_input != 0] = delta_input
+            # delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
+
+            gem_tmp = gene_mtx + delta_simulated
+            gem_tmp[gem_tmp<0] = 0
+            delta_simulated = gem_tmp - gene_mtx
+
+        gem_simulated = gene_mtx + delta_simulated
+
+        return gem_simulated
+
+
+
 def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
     """Calculate a nearest neighbour distance matrix
 
