@@ -126,7 +126,7 @@ class VisionEstimator(Estimator):
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
 
         if regulators == None and n_clusters == None:
-            self.regulators = self.grn.get_regulators(self.adata, self.target_gene)
+            self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
             self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
         else:
             self.regulators = regulators
@@ -148,8 +148,15 @@ class VisionEstimator(Estimator):
             y_pred += betas[:, w+1]*inputs_x[:, w]*model.betas[w+1]
 
         return y_pred
+    
+    def _mask_betas(self, betas, batch_labels):
+        regulator_dict = self.grn.regulator_dict
+        relevant_tfs = [regulator_dict[label.item()] for label in batch_labels]
+        
+        mask = torch.stack(relevant_tfs).to(device)
+        return betas * mask
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, regularize=False, lambd=0.05, a=0.9):
+    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False, regularize=False, lambd=0.05, a=0.9):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
@@ -157,6 +164,9 @@ class VisionEstimator(Estimator):
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
+
+            if cluster_grn:
+                betas = self._mask_betas(betas, batch_labels)
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             if regularize: ##TODO: make this work more consistently
@@ -169,11 +179,15 @@ class VisionEstimator(Estimator):
         return total_loss / len(dataloader)
     
     @torch.no_grad()
-    def _validation_loop(self, model, dataloader, criterion):
+    def _validation_loop(self, model, dataloader, criterion, cluster_grn = False):
         model.eval()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
             betas = model(batch_spatial.to(device), batch_labels.to(device))
+            
+            if cluster_grn:
+                betas = self._mask_betas(betas, batch_labels)
+            
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             total_loss += loss.item()
@@ -424,6 +438,7 @@ class SpatialInsights(VisionEstimator):
         learning_rate,
         rotate_maps,
         regularize,
+        cluster_grn,
         n_patches=2, n_blocks=4, hidden_d=14, n_heads=2,
         pbar=None
         ):
@@ -466,8 +481,8 @@ class SpatialInsights(VisionEstimator):
             pbar.refresh()
             
         for epoch in range(max_epochs):
-            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
-            validation_loss = self._validation_loop(model, valid_dataloader, criterion)
+            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, cluster_grn=cluster_grn, regularize=regularize)
+            validation_loss = self._validation_loop(model, valid_dataloader, criterion, cluster_grn=cluster_grn)
             
             losses.append(validation_loss)
 
@@ -496,6 +511,7 @@ class SpatialInsights(VisionEstimator):
         batch_size=32, 
         mode='train',
         regularize=False,
+        cluster_grn=False,
         rotate_maps=True,
         n_patches=2, n_blocks=2, hidden_d=16, n_heads=2,
         pbar=None
@@ -509,7 +525,6 @@ class SpatialInsights(VisionEstimator):
         self.rotate_maps = rotate_maps
         self.init_betas = init_betas
         self.annot = annot
-
 
         adata = self.adata.copy()
 
@@ -544,6 +559,7 @@ class SpatialInsights(VisionEstimator):
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
                 regularize=regularize,
+                cluster_grn=cluster_grn,
                 n_patches=n_patches, 
                 n_blocks=n_blocks, 
                 hidden_d=hidden_d, 
