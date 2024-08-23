@@ -311,14 +311,26 @@ class VisionEstimator(Estimator):
         }
         
         infer_dataloader = DataLoader(dataset, shuffle=False, **params)
-        
-        beta_list = []
-        
-        for batch_spatial, batch_labels in infer_dataloader:
-            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
-            beta_list.extend(betas.cpu().numpy())
+
+        if self.cluster_grn:
+            beta_stack = []
             
-        return np.array(beta_list)
+            for batch_spatial, batch_labels in infer_dataloader:
+                betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+                betas = self._mask_betas(betas, batch_labels)
+                beta_stack.append(betas)
+        
+            beta_stack = torch.cat(beta_stack, dim=0)
+            return beta_stack.cpu().numpy()
+
+        else:
+            beta_list = []
+            
+            for batch_spatial, batch_labels in infer_dataloader:
+                betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+                beta_list.extend(betas.cpu().numpy())
+            
+            return np.array(beta_list)
 
 class GeoCNNEstimatorV2(VisionEstimator):
     def _build_cnn(
@@ -522,6 +534,7 @@ class SpatialInsights(VisionEstimator):
 
         self.spatial_dim = spatial_dim  
         self.regularize = regularize
+        self.cluster_grn = cluster_grn
         self.rotate_maps = rotate_maps
         self.init_betas = init_betas
         self.annot = annot
