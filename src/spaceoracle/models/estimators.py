@@ -156,17 +156,18 @@ class VisionEstimator(Estimator):
         mask = torch.stack(relevant_tfs).to(device)
         return betas * mask
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False, regularize=False, lambd=0.05, a=0.9):
+    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False, regularize=False, lambd=1e-3, a=0.9):
         model.train()
         total_loss = 0
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
             
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
-            outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             if cluster_grn:
                 betas = self._mask_betas(betas, batch_labels)
+            
+            outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             if regularize: ##TODO: make this work more consistently
@@ -320,7 +321,7 @@ class VisionEstimator(Estimator):
                 betas = self._mask_betas(betas, batch_labels)
                 beta_stack.append(betas)
         
-            beta_stack = torch.cat(beta_stack, dim=0)
+            beta_stack = torch.cat(beta_stack)
             return beta_stack.cpu().numpy()
 
         else:

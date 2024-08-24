@@ -83,7 +83,7 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         regulator_masks = {}
 
         for label, tfs in regulator_dict.items():
-            indices = [all_regulators.index(tf) for tf in tfs if tf in all_regulators]
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
             
             mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
             mask[[0] + indices] = 1 
