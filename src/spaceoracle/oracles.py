@@ -15,10 +15,11 @@ import shutil
 import datetime
 import re
 import glob
+import pickle
+import io
 from random import shuffle
 from sklearn.decomposition import PCA
 import warnings
-from sklearn.neighbors import kneighbors_graph, NearestNeighbors
 from scipy import sparse
 from numba import jit
 from sklearn.linear_model import Ridge
@@ -27,8 +28,13 @@ from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial
 from .models.estimators import ViTEstimatorV2, ViT, device
 
-import pickle
-import io
+from .tools.utils import (
+    CPU_Unpickler,
+    knn_distance_matrix,
+    _adata_to_matrix,
+    connectivity_to_weights,
+    convolve_by_sparse_weights
+)
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -319,7 +325,7 @@ class SpaceOracle(Oracle):
         )
 
 
-    def _get_betas_dict(self):
+    def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
@@ -354,7 +360,7 @@ class SpaceOracle(Oracle):
         delta_simulated = delta_input.copy() 
 
         if self.beta_dict is None:
-            self.beta_dict = self._get_betas_dict() # compute betas for all genes for all cells
+            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
         
         for n in range(n_propagation):
             _simulated = np.array(
@@ -394,8 +400,12 @@ class SpaceOracle(Oracle):
         return sp_maps
 
 
+    def compute_betas(self):
+        self.beta_dict = self._get_spatial_betas_dict()
+        self.coef_matrix = self._get_co_betas()
 
-    def _getCoefMatrix(self, alpha=1):
+
+    def _get_co_betas(self, alpha=1):
 
         gem = self.adata.to_df(layer='normalized_count')
         genes = self.adata.var_names
@@ -450,12 +460,9 @@ class SpaceOracle(Oracle):
         if self.coef_matrix is None:
             self.coef_matrix = self._getCoefMatrix()
         
-
         for i in range(n_propagation):
             delta_simulated = delta_simulated.dot(self.coef_matrix)
             delta_simulated[delta_input != 0] = delta_input
-            # delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
-
             gem_tmp = gene_mtx + delta_simulated
             gem_tmp[gem_tmp<0] = 0
             delta_simulated = gem_tmp - gene_mtx
@@ -466,40 +473,42 @@ class SpaceOracle(Oracle):
 
 
 
-def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
-    """Calculate a nearest neighbour distance matrix
+# def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
+#     """Calculate a nearest neighbour distance matrix
 
-    Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
-    To achieve that we call kneighbors_graph with X = None
-    """
-    if metric == "correlation":
-        nn = NearestNeighbors(n_neighbors=k, metric="correlation", algorithm="brute", n_jobs=n_jobs)
-        nn.fit(data)
-        return nn.kneighbors_graph(X=None, mode=mode)
-    else:
-        nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
-        nn.fit(data)
-        return nn.kneighbors_graph(X=None, mode=mode)
-
-
-def connectivity_to_weights(mknn, axis=1):
-    if type(mknn) is not sparse.csr_matrix:
-        mknn = mknn.tocsr()
-    return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
-
-def convolve_by_sparse_weights(data, w):
-    w_ = w.T
-    assert np.allclose(w_.sum(0), 1), "weight matrix need to sum to one over the columns"
-    return sparse.csr_matrix.dot(data, w_)
+#     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
+#     To achieve that we call kneighbors_graph with X = None
+#     """
+#     if metric == "correlation":
+#         nn = NearestNeighbors(
+#             n_neighbors=k, metric="correlation", 
+#             algorithm="brute", n_jobs=n_jobs)
+#         nn.fit(data)
+#         return nn.kneighbors_graph(X=None, mode=mode)
+#     else:
+#         nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
+#         nn.fit(data)
+#         return nn.kneighbors_graph(X=None, mode=mode)
 
 
-def _adata_to_matrix(adata, layer_name, transpose=True):
-    if isinstance(adata.layers[layer_name], np.ndarray):
-        matrix = adata.layers[layer_name].copy()
-    else:
-        matrix = adata.layers[layer_name].todense().A.copy()
+# def connectivity_to_weights(mknn, axis=1):
+#     if type(mknn) is not sparse.csr_matrix:
+#         mknn = mknn.tocsr()
+#     return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
 
-    if transpose:
-        matrix = matrix.transpose()
+# def convolve_by_sparse_weights(data, w):
+#     w_ = w.T
+#     assert np.allclose(w_.sum(0), 1)
+#     return sparse.csr_matrix.dot(data, w_)
 
-    return matrix.copy(order="C")
+
+# def _adata_to_matrix(adata, layer_name, transpose=True):
+#     if isinstance(adata.layers[layer_name], np.ndarray):
+#         matrix = adata.layers[layer_name].copy()
+#     else:
+#         matrix = adata.layers[layer_name].todense().A.copy()
+
+#     if transpose:
+#         matrix = matrix.transpose()
+
+#     return matrix.copy(order="C")
