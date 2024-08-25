@@ -191,9 +191,9 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='ols', 
-    max_epochs=100, spatial_dim=64, learning_rate=3e-4, batch_size=16, rotate_maps=True, 
-    regularize=False, n_patches=2, n_heads=8, n_blocks=4, hidden_d=16):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='ones', 
+    max_epochs=10, spatial_dim=64, learning_rate=3e-4, batch_size=128, rotate_maps=True, cluster_grn=True, 
+    regularize=False, n_patches=4, n_heads=2, n_blocks=4, hidden_d=16):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -208,6 +208,7 @@ class SpaceOracle(Oracle):
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.rotate_maps = rotate_maps
+        self.cluster_grn = cluster_grn
         self.regularize = regularize
         self.n_patches = n_patches
         self.n_heads = n_heads
@@ -276,6 +277,7 @@ class SpaceOracle(Oracle):
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
                     regularize=self.regularize,
+                    cluster_grn=self.cluster_grn,
                     n_patches=self.n_patches, 
                     n_heads=self.n_heads, 
                     n_blocks=self.n_blocks, 

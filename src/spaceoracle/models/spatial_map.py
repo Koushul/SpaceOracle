@@ -36,7 +36,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     
     spatial_maps = np.zeros((len(x), m, n))
     mask = np.zeros((len(clusters), m, n))
-    with tqdm(total=len(xyc), disable=disable_tqdm, desc='🌍️ Generating spatial maps') as pbar:
+    with tqdm(total=len(xyc), disable=disable_tqdm, desc=f'🌍️ Generating {m}x{n} spatial maps') as pbar:
         
         for s, coord in enumerate(xyc):
             x_, y_, cluster = coord

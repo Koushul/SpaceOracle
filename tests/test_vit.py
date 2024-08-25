@@ -9,6 +9,7 @@ import scanpy as sc
 from torch.utils.data import DataLoader
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
+from spaceoracle import SpaceOracle
 from spaceoracle.models.estimators import ViTEstimatorV2, GeoCNNEstimatorV2
 from spaceoracle.models.vit_blocks import ViT
 
@@ -73,6 +74,7 @@ def test_vit_with_real_data():
     n_top_genes = 4000
     min_cells = 10
     min_counts = 350
+    spatial_dim = 64
 
     adata_train.var_names_make_unique()
     adata_train.var["mt"] = adata_train.var_names.str.startswith("mt-")
@@ -115,7 +117,18 @@ def test_vit_with_real_data():
     adata_test = adata_test[:, adata_test.var_names.isin(
         np.intersect1d(adata_train.var_names, adata_test.var_names))]
 
-    estimator = ViTEstimatorV2(adata_train, target_gene='Cd74')
+    adata_train.layers["normalized_count"] = adata_train.to_df().values
+    adata_test.layers["normalized_count"] = adata_test.to_df().values
+
+    # SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, in_place=True)
+    # pcs = SpaceOracle.perform_PCA(adata_train)
+    # SpaceOracle.knn_imputation(adata_train, pcs)
+
+    # SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
+    # pcs = SpaceOracle.perform_PCA(adata_test)
+    # SpaceOracle.knn_imputation(adata_test, pcs)
+
+    estimator = ViTEstimatorV2(adata_train, target_gene='Cd74', layer='normalized_count')
     assert len(estimator.regulators) == 15
 
     assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 15

@@ -118,8 +118,10 @@ class BetaModel(nn.Module):
 
 
 class VisionEstimator(Estimator):
-    def __init__(self, adata, target_gene, regulators=None, n_clusters=None):
+    def __init__(self, adata, target_gene, regulators=None, n_clusters=None, layer='imputed_count'):
         assert target_gene in adata.var_names
+        assert layer in adata.layers
+
         self.adata = adata
         self.target_gene = target_gene
         # self.grn = GeneRegulatoryNetwork()
@@ -131,7 +133,8 @@ class VisionEstimator(Estimator):
         else:
             self.regulators = regulators
             self.n_clusters = n_clusters
-
+        
+        self.layer = layer
         self.model = None
         self.losses = []
         
@@ -265,7 +268,7 @@ class VisionEstimator(Estimator):
         
         
     @torch.no_grad()
-    def get_betas(self, xy, labels, spatial_dim=None):
+    def get_betas(self, xy, labels, spatial_dim=None, layer=None):
         """
         Get beta values for the given spatial coordinates and labels.
 
@@ -458,7 +461,8 @@ class SpatialInsights(VisionEstimator):
 
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
                 adata, self.target_gene, self.regulators, 
-                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size, annot=annot, spatial_dim=spatial_dim)
+                mode=mode, rotate_maps=rotate_maps, batch_size=batch_size,
+                annot=annot, layer=self.layer, spatial_dim=spatial_dim)
         
         # self.train_dataloader = train_dataloader
         # self.valid_dataloader = valid_dataloader
@@ -553,8 +557,8 @@ class SpatialInsights(VisionEstimator):
             beta_init = torch.ones(len(self.regulators)+1)
         
         elif init_betas == 'ols':
-            X = adata.to_df()[self.regulators].values
-            y = adata.to_df()[[self.target_gene]].values
+            X = adata.to_df(layer=self.layer)[self.regulators].values
+            y = adata.to_df(layer=self.layer)[[self.target_gene]].values
             ols = LeastSquaredEstimator()
             ols.fit(X, y)
             beta_init = ols.get_betas()
