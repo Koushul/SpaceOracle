@@ -39,11 +39,14 @@ class ViT(nn.Module):
         
         # self.mlp = nn.Linear(self.hidden_d, self.dim)
 
-        self.cluster_embed = nn.Sequential(
-            nn.Embedding(self.in_channels, self.hidden_d),
-            nn.Linear(self.hidden_d, self.hidden_d),
-            nn.ReLU()
-        )
+        # self.cluster_embed = nn.Sequential(
+        #     nn.Embedding(self.in_channels, self.hidden_d),
+        #     nn.Linear(self.hidden_d, self.hidden_d),
+        #     nn.GELU(),
+        #     nn.Dropout(0.2),
+        # )
+
+        self.cluster_embed = nn.Embedding(self.in_channels, self.hidden_d)
 
         self.mlp = nn.Sequential(
             nn.Linear(self.hidden_d, 32),
@@ -54,6 +57,9 @@ class ViT(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(16, self.dim)
         )
+
+        self.alpha = nn.Parameter(torch.tensor(1, dtype=torch.float32), requires_grad=True)
+        # self.alpha = 5e-2
 
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
@@ -70,7 +76,7 @@ class ViT(nn.Module):
         out = out[:, 0]
 
         emb = self.cluster_embed(inputs_labels)
-        out = out + 5e-2 * emb # weigh down the cluster embeddings
+        out = out + self.alpha * emb # weigh down the cluster embeddings
         
         betas = self.mlp(out)
 
