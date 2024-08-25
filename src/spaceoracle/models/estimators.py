@@ -459,7 +459,10 @@ class SpatialInsights(VisionEstimator):
         train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
                 adata, self.target_gene, self.regulators, 
                 mode=mode, rotate_maps=rotate_maps, batch_size=batch_size, annot=annot, spatial_dim=spatial_dim)
-           
+        
+        # self.train_dataloader = train_dataloader
+        # self.valid_dataloader = valid_dataloader
+
         model = ViT(
             self.beta_init, 
             in_channels=self.n_clusters, 
@@ -504,7 +507,11 @@ class SpatialInsights(VisionEstimator):
                 best_model = copy.deepcopy(model)
                 best_iter = epoch
             
-            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
+            # pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | Baseline: {baseline_loss:.4f}'
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | alpha: {model.alpha.item():.4f}'
+            # pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | alpha: {model.alpha:.4f}'
+
+
             pbar.update()
             
         best_model.eval()
