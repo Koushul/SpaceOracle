@@ -169,7 +169,7 @@ class OracleQueue:
         return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
 
     def create_lock(self, gene):
-        assert not os.path.exists(f'{self.model_dir}/{gene}.lock')
+        # assert not os.path.exists(f'{self.model_dir}/{gene}.lock')
         now = str(datetime.datetime.now())
         with open(f'{self.model_dir}/{gene}.lock', 'w') as f:
             f.write(now)
@@ -217,13 +217,20 @@ class SpaceOracle(Oracle):
         self.beta_dict = None
         self.coef_matrix = None
 
-        if 'spatial_maps' not in self.adata.obsm:
-            self.imbue_adata_with_space(
-                self.adata, 
-                annot=self.annot,
-                spatial_dim=self.spatial_dim,
-                in_place=True
-            )
+        # if 'spatial_maps' not in self.adata.obsm:
+        #     self.imbue_adata_with_space(
+        #         self.adata, 
+        #         annot=self.annot,
+        #         spatial_dim=self.spatial_dim,
+        #         in_place=True
+        #     )
+
+        self.imbue_adata_with_space(
+            self.adata, 
+            annot=self.annot,
+            spatial_dim=self.spatial_dim,
+            in_place=True
+        )
 
         self.estimator_models = {}
         self.regulators = {}
@@ -265,6 +272,9 @@ class SpaceOracle(Oracle):
                 gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
                 gene_bar.desc = f'{len(self.queue.orphans)} orphans'
                 gene_bar.refresh()
+
+                if os.path.exists(f'{self.model_dir}/{gene}.lock'):
+                    continue
 
                 self.queue.create_lock(gene)
 

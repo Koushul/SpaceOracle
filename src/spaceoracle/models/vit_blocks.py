@@ -6,8 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def cosine_annealing(epoch, total_epochs):
+    return (0.5 * (1 + np.cos(np.pi * (epoch - 0) / total_epochs))) 
+
 class ViT(nn.Module):
-    def __init__(self, betas, in_channels, spatial_dim, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
+    def __init__(self, betas, in_channels, spatial_dim, max_epochs=20, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
         super().__init__()
         
         self.__version__ = 5.0
@@ -22,6 +25,7 @@ class ViT(nn.Module):
         self.n_blocks = n_blocks
         self.n_heads = n_heads
         self.hidden_d = hidden_d
+        self.max_epochs = max_epochs
         
         # Input and patches sizes
         assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
@@ -34,50 +38,44 @@ class ViT(nn.Module):
         self.class_token = nn.Parameter(torch.rand(1, self.hidden_d))       # Consider removing
         self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2 + 1, self.hidden_d))
         self.pos_embed.requires_grad = False
-        
-        self.blocks = nn.ModuleList([ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
-        
-        # self.mlp = nn.Linear(self.hidden_d, self.dim)
 
-        # self.cluster_embed = nn.Sequential(
-        #     nn.Embedding(self.in_channels, self.hidden_d),
-        #     nn.Linear(self.hidden_d, self.hidden_d),
-        #     nn.GELU(),
-        #     nn.Dropout(0.2),
-        # )
+        # self.cluster_embed = nn.Embedding(self.in_channels, self.hidden_d)
+        self.cluster_embed = nn.Embedding(self.in_channels, 8)
 
-        self.cluster_embed = nn.Embedding(self.in_channels, self.hidden_d)
+        
+        self.blocks = nn.ModuleList(
+            [ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.hidden_d, 32),
+            nn.Linear(self.hidden_d+8, 32),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(32, 16),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(16, self.dim)
         )
 
-        self.alpha = nn.Parameter(torch.tensor(1, dtype=torch.float32), requires_grad=True)
+        self.alpha = nn.Parameter(torch.tensor(0, dtype=torch.float32), requires_grad=True)
         # self.alpha = 5e-2
+
+        self.e = 0
 
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
         
-        tokens = self.linear_mapper(patches)
+        tokens = self.linear_mapper(patches) 
         tokens = torch.cat((self.class_token.expand(n, 1, -1), tokens), dim=1)
         out = tokens + self.pos_embed.repeat(n, 1, 1)
         
-        for block in self.blocks:
-            out = block(out) 
+        for j, block in enumerate(self.blocks):
+            out = block(out)
             
-        # Get only the classification token
         out = out[:, 0]
 
-        emb = self.cluster_embed(inputs_labels)
-        out = out + self.alpha * emb # weigh down the cluster embeddings
-        
+        emb = self.cluster_embed(inputs_labels) * 1e-3
+        out = torch.concat([out, emb], dim=1)
         betas = self.mlp(out)
 
         return betas
