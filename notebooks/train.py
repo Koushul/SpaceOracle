@@ -9,13 +9,16 @@ from spaceoracle.models.estimators import ViTEstimatorV2, device
 from utils import adata_train, adata_test
 
 so = spaceoracle.SpaceOracle(
-    adata_train, 
-    annot='rctd_cluster',
-    init_betas='ones', 
-    max_epochs=10, 
-    learning_rate=3e-4, 
+    annot='rctd_cluster', 
+    max_epochs=13, 
+    learning_rate=7e-4, 
     spatial_dim=64,
-    batch_size=128,
+    batch_size=256,
+    init_betas='ones',
+    mode='train_test',
+    rotate_maps=True,
+    cluster_grn=True,
+    regularize=False,
     n_patches=4, n_heads=2, n_blocks=4, hidden_d=16
 )
 

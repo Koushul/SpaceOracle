@@ -410,7 +410,7 @@ class SpaceOracle(Oracle):
 
     def _get_co_betas(self, alpha=1):
 
-        gem = self.adata.to_df(layer='normalized_count')
+        gem = self.adata.to_df(layer='imputed_count')
         genes = self.adata.var_names
         
         zero_ = pd.Series(np.zeros(len(genes)), index=genes)
@@ -461,7 +461,7 @@ class SpaceOracle(Oracle):
         delta_simulated = delta_input.copy() 
 
         if self.coef_matrix is None:
-            self.coef_matrix = self._getCoefMatrix()
+            self.coef_matrix = self._get_co_betas()
         
         for i in range(n_propagation):
             delta_simulated = delta_simulated.dot(self.coef_matrix)

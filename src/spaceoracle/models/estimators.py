@@ -268,37 +268,24 @@ class VisionEstimator(Estimator):
         
         
     @torch.no_grad()
-    def get_betas(self, xy, labels, spatial_dim=None, layer=None):
-        """
-        Get beta values for the given spatial coordinates and labels.
+    def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, layer=None):
 
-        This method processes the input spatial data and labels through the trained model
-        to obtain beta values, which represent the importance of each regulator for the target gene.
-
-        Parameters:
-        -----------
-        xy : numpy.ndarray
-            Array of shape (n_samples, 2) containing spatial coordinates.
-        labels : numpy.ndarray
-            Array of shape (n_samples,) containing cell type or cluster labels.
-        spatial_dim : int, optional
-            Dimension of the spatial map. If None, uses the spatial dimension used to train the model.
-
-        Returns:
-        --------
-        numpy.ndarray
-            Array of shape (n_samples, n_regulators) containing beta values for each sample and regulator.
-
-
-        """
+        assert xy is not None or spatial_maps is not None
 
         spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
         
-        spatial_maps = norm(
-            torch.from_numpy(
-                xyc2spatial(xy[:, 0], xy[:, 1], labels, spatial_dim, spatial_dim)
-            ).float()
-        )
+        if spatial_maps is None:
+            spatial_maps = norm(
+                torch.from_numpy(
+                    xyc2spatial(
+                        xy[:, 0], xy[:, 1], 
+                        labels, spatial_dim, spatial_dim, 
+                        disable_tqdm=False
+                    )
+                ).float()
+            )
+        else:
+            spatial_maps = torch.from_numpy(spatial_maps)
 
         dataset = TensorDataset(
             spatial_maps.float(), 
@@ -309,7 +296,7 @@ class VisionEstimator(Estimator):
         g.manual_seed(42)
         
         params = {
-            'batch_size': 64,
+            'batch_size': 1024,
             'worker_init_fn': seed_worker,
             'generator': g
         }
