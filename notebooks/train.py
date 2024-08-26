@@ -2,7 +2,7 @@ import sys
 sys.path.append('../src')
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
-
+import scanpy as sc
 import spaceoracle
 from spaceoracle.models.estimators import ViTEstimatorV2, device
 # from utils import adata_train, adata_test

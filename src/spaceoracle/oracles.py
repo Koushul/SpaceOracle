@@ -217,20 +217,13 @@ class SpaceOracle(Oracle):
         self.beta_dict = None
         self.coef_matrix = None
 
-        # if 'spatial_maps' not in self.adata.obsm:
-        #     self.imbue_adata_with_space(
-        #         self.adata, 
-        #         annot=self.annot,
-        #         spatial_dim=self.spatial_dim,
-        #         in_place=True
-        #     )
-
-        self.imbue_adata_with_space(
-            self.adata, 
-            annot=self.annot,
-            spatial_dim=self.spatial_dim,
-            in_place=True
-        )
+        if 'spatial_maps' not in self.adata.obsm:
+            self.imbue_adata_with_space(
+                self.adata, 
+                annot=self.annot,
+                spatial_dim=self.spatial_dim,
+                in_place=True
+            )
 
         self.estimator_models = {}
         self.regulators = {}
