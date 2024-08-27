@@ -10,7 +10,7 @@ def cosine_annealing(epoch, total_epochs):
     return (0.5 * (1 + np.cos(np.pi * (epoch - 0) / total_epochs))) 
 
 class ViT(nn.Module):
-    def __init__(self, betas, in_channels, spatial_dim, max_epochs=20, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
+    def __init__(self, betas, in_channels, spatial_dim, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
         super().__init__()
         
         self.__version__ = 5.0
@@ -25,7 +25,6 @@ class ViT(nn.Module):
         self.n_blocks = n_blocks
         self.n_heads = n_heads
         self.hidden_d = hidden_d
-        self.max_epochs = max_epochs
         
         # Input and patches sizes
         assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
@@ -39,15 +38,13 @@ class ViT(nn.Module):
         self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2 + 1, self.hidden_d))
         self.pos_embed.requires_grad = False
 
-        # self.cluster_embed = nn.Embedding(self.in_channels, self.hidden_d)
-        self.cluster_embed = nn.Embedding(self.in_channels, 8)
-
+        self.cluster_embed = nn.Embedding(self.in_channels, self.hidden_d)
         
         self.blocks = nn.ModuleList(
             [ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.hidden_d+8, 32),
+            nn.Linear(self.hidden_d, 32),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(32, 16),
@@ -75,7 +72,8 @@ class ViT(nn.Module):
         out = out[:, 0]
 
         emb = self.cluster_embed(inputs_labels) * 1e-3
-        out = torch.concat([out, emb], dim=1)
+        # out = torch.concat([out, emb], dim=1)
+        out = out + emb
         betas = self.mlp(out)
 
         return betas
