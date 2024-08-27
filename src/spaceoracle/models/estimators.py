@@ -21,6 +21,8 @@ from ..tools.utils import set_seed, seed_worker, deprecated
 from ..tools.data import SpaceOracleDataset
 from ..tools.network import GeneRegulatoryNetwork, DayThreeRegulatoryNetwork
 
+import wandb
+
 set_seed(42)
 
 
@@ -461,28 +463,33 @@ class SpatialInsights(VisionEstimator):
         baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
         _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
 
-        if pbar is None:
-            _manager = enlighten.get_manager()
-            pbar = _manager.counter(
-                total=max_epochs, 
-                desc=f'{_prefix} <> MSE: ... | Baseline: {baseline_loss:.4f}', 
-                unit='epochs'
-            )
-            pbar.refresh()
+        if use_wandb == False:
+            if pbar is None:
+                _manager = enlighten.get_manager()
+                pbar = _manager.counter(
+                    total=max_epochs, 
+                    desc=f'{_prefix} <> MSE: ... | Baseline: {baseline_loss:.4f}', 
+                    unit='epochs'
+                )
+                pbar.refresh()
             
         for epoch in range(max_epochs):
-            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize)
+            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, regularize=regularize, lambd=lambd, a=a)
             validation_loss = self._validation_loop(model, valid_dataloader, criterion)
             
             losses.append(validation_loss)
+
+            if use_wandb:
+                wandb.log({f'{use_wandb}_train': training_loss, f'{use_wandb}_val': validation_loss})
 
             if validation_loss < best_score:
                 best_score = validation_loss
                 best_model = copy.deepcopy(model)
                 best_iter = epoch
             
-            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
-            pbar.update()
+            if pbar != None:
+                pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
+                pbar.update()
             
         best_model.eval()
         
@@ -501,6 +508,7 @@ class SpatialInsights(VisionEstimator):
         batch_size=32, 
         mode='train',
         regularize=False,
+        lambd=0.001, a=0.9,
         rotate_maps=True,
         n_patches=2, n_blocks=2, hidden_d=16, n_heads=2,
         pbar=None
@@ -549,11 +557,13 @@ class SpatialInsights(VisionEstimator):
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
                 regularize=regularize,
+                lambd=lambd, a=a,
                 n_patches=n_patches, 
                 n_blocks=n_blocks, 
                 hidden_d=hidden_d, 
                 n_heads=n_heads,
-                pbar=pbar
+                pbar=pbar,
+                use_wandb=use_wandb
             )
             
             self.model = model  

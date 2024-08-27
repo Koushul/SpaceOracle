@@ -14,15 +14,13 @@ class ViT(nn.Module):
         
         self.betas = betas
         self.dim = betas.shape[0] # number of TFs
-        self.in_channels = in_channels
-        self.spatial_dim = spatial_dim
+
         # Attributes
         chw = (in_channels, spatial_dim, spatial_dim) # ( C , H , W )
         self.n_patches = n_patches
         self.n_blocks = n_blocks
         self.n_heads = n_heads
         self.hidden_d = hidden_d
-        
         # Input and patches sizes
         assert chw[1] % n_patches == 0, "Input shape not entirely divisible by number of patches"
         assert chw[2] % n_patches == 0, "Input shape not entirely divisible by number of patches"
@@ -31,9 +29,9 @@ class ViT(nn.Module):
         self.input_d = int(chw[0] * self.patch_size[0] * self.patch_size[1])
         self.linear_mapper = nn.Linear(self.input_d, self.hidden_d)
         
-        self.class_token = nn.Parameter(torch.rand(1, self.hidden_d))       # Consider removing
-        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2 + 1, self.hidden_d))
+        self.pos_embed = nn.Parameter(get_positional_embeddings(self.n_patches ** 2, self.hidden_d))
         self.pos_embed.requires_grad = False
+        self.label_embed = nn.Embedding(in_channels, self.hidden_d) # for cell-type information
         
         self.blocks = nn.ModuleList([ViTBlock(hidden_d, n_heads) for _ in range(n_blocks)])
         
@@ -58,11 +56,10 @@ class ViT(nn.Module):
     def forward(self, images, inputs_labels):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        
+
         tokens = self.linear_mapper(patches)
-        tokens = torch.cat((self.class_token.expand(n, 1, -1), tokens), dim=1)
-        out = tokens + self.pos_embed.repeat(n, 1, 1)
-        
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
+        out = tokens + pos_embed
         for block in self.blocks:
             out = block(out) 
             
@@ -80,10 +77,10 @@ class ViT(nn.Module):
     def get_att_weights(self, images):
         n, c, h, w = images.shape 
         patches = patchify(images, self.n_patches).to(self.pos_embed.device)
-        
+
         tokens = self.linear_mapper(patches)
-        tokens = torch.cat((self.class_token.expand(n, 1, -1), tokens), dim=1)
-        out = tokens + self.pos_embed.repeat(n, 1, 1)
+        pos_embed = self.pos_embed.repeat(n, 1, 1)
+        out = tokens + pos_embed
         
         att_weights = []   # (n_blocks, batch, n_heads, seqs, seqs) where seqs is flattened patches
         for block in self.blocks:
@@ -93,8 +90,6 @@ class ViT(nn.Module):
         return att_weights
 
 
-
-
     def __str__(self):
         # return ''
         return f'VisionTransformer(in_channels={self.in_channels}, spatial_dim={self.spatial_dim}, n_patches={self.n_patches}, n_blocks={self.n_blocks}, hidden_d={self.hidden_d}, n_heads={self.n_heads})'
@@ -102,10 +97,6 @@ class ViT(nn.Module):
     def __repr__(self):
         return self.__str__()
         
-        
-
-    
-
 
     
 
