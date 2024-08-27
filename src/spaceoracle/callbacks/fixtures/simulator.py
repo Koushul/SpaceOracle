@@ -89,9 +89,9 @@ class SimulatedDataV2:
         replacements = np.vectorize(lambda x: cmap_dict.get(x, x))
         cmap = replacements(c)
         
-        noise = 2           # increase to cause more variation within cluster
-        beta_var = 10       # increase to cause greater variation between clusters
-        beta_mag = 0.1      # increase to get bigger beta magnitude
+        noise = 20          # increase to cause more variation within cluster
+        beta_var = 30       # increase to cause greater variation between clusters
+        beta_mag = 4        # increase to get bigger beta magnitude
 
         for tf in tfs:                                      # generate betas for each tf
             beta = np.array([beta_var*cmap + noise*(np.cos(noise+x)+np.sin(noise+y))]) * (beta_mag*tf)
