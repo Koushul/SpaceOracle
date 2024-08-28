@@ -458,7 +458,6 @@ class SpatialInsights(VisionEstimator):
             self.beta_init, 
             in_channels=self.n_clusters, 
             spatial_dim=spatial_dim, 
-            max_epochs=max_epochs,
             n_patches=n_patches, 
             n_blocks=n_blocks, 
             hidden_d=hidden_d, 

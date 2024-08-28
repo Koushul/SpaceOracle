@@ -2,15 +2,13 @@ import numpy as np
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn as nn 
-import torch.nn.functional as F
 
 
 def cosine_annealing(epoch, total_epochs):
     return (0.5 * (1 + np.cos(np.pi * (epoch - 0) / total_epochs))) 
 
 class ViT(nn.Module):
-    def __init__(self, betas, in_channels, spatial_dim, n_patches=2, n_blocks=4, hidden_d=16, n_heads=8):
+    def __init__(self, betas, in_channels, spatial_dim, n_patches=4, n_blocks=4, hidden_d=16, n_heads=8):
         super().__init__()
         
         self.__version__ = 5.0
