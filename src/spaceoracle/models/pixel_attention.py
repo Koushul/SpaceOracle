@@ -69,7 +69,6 @@ class ConditionalConv2D(_ConvNd):
     
 
     def forward(self, inputs, input_labels):
-        b, _, _, _ = inputs.size()
         res = []
         
         assert inputs.shape[0] == input_labels.shape[0]
@@ -97,6 +96,16 @@ class ConditionalConv2D(_ConvNd):
 
 
 class NicheAttentionNetwork(nn.Module):
+    """
+    NicheAttentionNetwork uses a custom conditional convolutional layer \
+        to generate channel-wise cell type specific attention maps.
+
+    Estimated βetas are thus a function of x, y coordinates and cell type.
+        
+    Attention maps are generate using:
+        `att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))`
+
+    """
     
     def __init__(self, betas, in_channels, spatial_dim):
         super().__init__()
@@ -141,14 +150,12 @@ class NicheAttentionNetwork(nn.Module):
 
         self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
-
     def forward(self, spatial_maps, cluster_info):
-
         att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
         out = att * spatial_maps
         out = self.conv_layers(out)
-        emb = self.cluster_emb(cluster_info)
-        out = out + emb*self.alpha
+        emb = self.cluster_emb(cluster_info) * self.alpha
+        out = out + emb 
         betas = self.mlp(out)
 
         return betas
