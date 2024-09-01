@@ -1,6 +1,8 @@
 import numpy as np
 import warnings
 
+from spaceoracle.models.pixel_attention import NicheAttentionNetwork
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from pysal.model.spreg import OLS
 from abc import ABC, abstractmethod
@@ -145,10 +147,17 @@ class VisionEstimator(Estimator):
         assert inputs_x.shape[1] == len(self.regulators) == model.dim-1
         assert betas.shape[1] == len(self.regulators)+1 == len(model.betas) == len(self.regulators)+1
 
-        y_pred = betas[:, 0]*model.betas[0]
+        # y_pred = betas[:, 0]*model.betas[0]
+         
+        # for w in range(model.dim-1):
+        #     y_pred += betas[:, w+1]*inputs_x[:, w]*model.betas[w+1]
+
+        # return y_pred
+
+        y_pred = betas[:, 0]
          
         for w in range(model.dim-1):
-            y_pred += betas[:, w+1]*inputs_x[:, w]*model.betas[w+1]
+            y_pred += betas[:, w+1]*inputs_x[:, w]
 
         return y_pred
     
@@ -173,9 +182,10 @@ class VisionEstimator(Estimator):
             outputs = self.predict_y(model, betas, inputs_x=batch_x.to(device))
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
-            if regularize: ##TODO: make this work more consistently
-                loss += lambd * ((a*torch.sum((betas)**2) + ((1-a)/2)*torch.sum(abs(betas)) ))
-                # loss += scale * torch.sum((betas)**2)
+
+            if regularize:
+                loss += torch.mean((betas - torch.from_numpy(model.betas).float().to(device))**2)
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -275,15 +285,22 @@ class VisionEstimator(Estimator):
         spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
         
         if spatial_maps is None:
-            spatial_maps = norm(
-                torch.from_numpy(
-                    xyc2spatial(
-                        xy[:, 0], xy[:, 1], 
-                        labels, spatial_dim, spatial_dim, 
-                        disable_tqdm=False
-                    )
+            # spatial_maps = norm(
+            #     torch.from_numpy(
+            #         xyc2spatial(
+            #             xy[:, 0], xy[:, 1], 
+            #             labels, spatial_dim, spatial_dim, 
+            #             disable_tqdm=False
+            #         )
+            #     ).float()
+            # )
+            spatial_maps = torch.from_numpy(
+                xyc2spatial(
+                    xy[:, 0], xy[:, 1], 
+                    labels, spatial_dim, spatial_dim, 
+                    disable_tqdm=False
                 ).float()
-            )
+            )   
         else:
             spatial_maps = torch.from_numpy(spatial_maps)
 
@@ -596,3 +613,163 @@ class SpatialInsights(VisionEstimator):
 
 ## backward compatibility
 ViTEstimatorV2 = SpatialInsights
+
+
+class PixelAttention(VisionEstimator):
+    def _build_model(
+        self,
+        adata,
+        annot,
+        spatial_dim,
+        mode,
+        layer,
+        max_epochs,
+        batch_size,
+        learning_rate,
+        rotate_maps,
+        cluster_grn,
+        regularize,
+        pbar=None
+        ):
+
+        train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
+            adata, self.target_gene, self.regulators, 
+            mode=mode, rotate_maps=rotate_maps, 
+            batch_size=batch_size, annot=annot, 
+            layer=layer,
+            spatial_dim=spatial_dim
+        )
+
+        model = NicheAttentionNetwork(
+            betas=self.beta_init,
+            in_channels=self.n_clusters,
+            spatial_dim=spatial_dim,
+        )
+
+
+        model.to(device)
+
+        criterion = nn.MSELoss(reduction='mean')
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+        losses = []
+        best_model = copy.deepcopy(model)
+        best_score = np.inf
+        best_iter = 0
+    
+        baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
+        _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
+
+        if pbar is None:
+            _manager = enlighten.get_manager()
+            pbar = _manager.counter(
+                total=max_epochs, 
+                desc=f'{_prefix} <> MSE: ... | Baseline: {baseline_loss:.4f}', 
+                unit='epochs'
+            )
+            pbar.refresh()
+            
+        for epoch in range(max_epochs):
+            training_loss = self._training_loop(
+                model, train_dataloader, criterion, optimizer, 
+                cluster_grn=cluster_grn, regularize=regularize)
+            validation_loss = self._validation_loop(
+                model, valid_dataloader, criterion, 
+                cluster_grn=cluster_grn)
+            
+            losses.append(validation_loss)
+
+            if validation_loss < best_score:
+                best_score = validation_loss
+                best_model = copy.deepcopy(model)
+                best_iter = epoch
+            
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
+            pbar.update()
+            
+        best_model.eval()
+        
+        return best_model, losses
+
+
+    def fit(
+        self,
+        annot,
+        init_betas='zeros', 
+        max_epochs=10, 
+        learning_rate=2e-4, 
+        spatial_dim=64,
+        batch_size=32, 
+        mode='train',
+        regularize=False,
+        rotate_maps=True,
+        cluster_grn=False,
+        pbar=None
+        ):
+        
+        assert annot in self.adata.obs.columns
+        assert init_betas in ['ones', 'ols', 'zeros']
+
+        self.spatial_dim = spatial_dim  
+        self.regularize = regularize
+        self.rotate_maps = rotate_maps
+        self.init_betas = init_betas
+        self.annot = annot
+        self.cluster_grn = cluster_grn
+
+
+        adata = self.adata.copy()
+
+        if init_betas == 'ones':
+            beta_init = torch.ones(len(self.regulators)+1)
+        
+        elif init_betas == 'ols':
+            X = adata.to_df()[self.regulators].values
+            y = adata.to_df()[[self.target_gene]].values
+            ols = LeastSquaredEstimator()
+            ols.fit(X, y)
+            beta_init = ols.get_betas()
+
+        # elif init_betas == 'co':
+        #     co_coefs = self.grn.get_regulators_with_pvalues(
+        #         adata, self.target_gene).groupby('source').mean()
+        #     co_coefs = co_coefs.loc[self.regulators]
+        #     beta_init = np.array(co_coefs.values).reshape(-1, )
+        #     beta_init = np.concatenate([beta_init, [1]], axis=0) 
+
+        elif init_betas == 'zeros':
+            beta_init = torch.zeros(len(self.regulators)+1)
+            
+        self.beta_init = np.array(beta_init).reshape(-1, )
+
+        assert len(self.beta_init) == len(self.regulators)+1
+        
+        try:
+            model, losses = self._build_model(
+                adata,
+                annot,
+                spatial_dim=spatial_dim, 
+                mode=mode,
+                layer=self.layer,
+                cluster_grn=cluster_grn,
+                max_epochs=max_epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                rotate_maps=rotate_maps,
+                regularize=regularize,
+                pbar=pbar
+            )
+            
+            self.model = model  
+            self.losses = losses
+            
+        
+        except KeyboardInterrupt:
+            print('Training interrupted...')
+            pass
+
+
+    def export(self):
+        self.model.eval()
+        # self.model.cpu()
+        return self.model, self.regulators, self.target_gene

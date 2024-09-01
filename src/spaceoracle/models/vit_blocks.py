@@ -69,7 +69,7 @@ class ViT(nn.Module):
             
         out = out[:, 0]
 
-        emb = self.cluster_embed(inputs_labels) * 1e-3
+        emb = self.cluster_embed(inputs_labels) * 1
         # out = torch.concat([out, emb], dim=1)
         out = out + emb
         betas = self.mlp(out)
