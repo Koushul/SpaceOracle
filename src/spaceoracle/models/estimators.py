@@ -717,7 +717,6 @@ class PixelAttention(VisionEstimator):
         self.annot = annot
         self.cluster_grn = cluster_grn
 
-
         adata = self.adata.copy()
 
         if init_betas == 'ones':

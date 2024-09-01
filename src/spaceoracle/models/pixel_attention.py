@@ -17,11 +17,18 @@ class _cluster_routing(nn.Module):
         self.fc = nn.Linear(pool_emb*2, num_experts)
 
     def forward(self, spatial_f, labels):
-        spatial_f = spatial_f.flatten()
+        spatial_f = spatial_f.flatten(1)
         emb = self.cluster_emb(labels)
-        x = self.fc(torch.cat([spatial_f, emb]))
+        x = self.fc(torch.cat([spatial_f, emb], dim=1))
         x = self.dropout(x)
         return F.sigmoid(x)
+
+    # def forward_(self, spatial_f, labels):
+    #     spatial_f = spatial_f.flatten()
+    #     emb = self.cluster_emb(labels)
+    #     x = self.fc(torch.cat([spatial_f, emb]))
+    #     x = self.dropout(x)
+    #     return F.sigmoid(x)
     
 
 
@@ -66,13 +73,23 @@ class ConditionalConv2D(_ConvNd):
         res = []
         
         assert inputs.shape[0] == input_labels.shape[0]
-        for inputx, label in zip(inputs, input_labels):
-            inputx = inputx.unsqueeze(0)
-            pooled_inputs = self._avg_pooling(inputx)
-            routing_weights = self._routing_fn(pooled_inputs, label)
-            kernels = torch.sum(routing_weights[:, None, None, None, None] * self.weight, 0)
-            out = self._conv_forward(inputx, kernels)
+
+        pooled_inputs = self._avg_pooling(inputs)
+        routing_weights = self._routing_fn(pooled_inputs, input_labels)
+        kernels = torch.sum(routing_weights[:, :, None, None, None, None] * self.weight, 1)
+        
+        for inputx, kernel in zip(inputs, kernels):
+            out = self._conv_forward(inputx.unsqueeze(0), kernel)
             res.append(out)
+
+
+        # for inputx, label in zip(inputs, input_labels):
+        #     inputx = inputx.unsqueeze(0)
+        #     pooled_inputs = self._avg_pooling(inputx)
+        #     routing_weights = self._routing_fn(pooled_inputs, label)
+        #     kernels = torch.sum(routing_weights[:, None, None, None, None] * self.weight, 0)
+        #     out = self._conv_forward(inputx, kernels)
+        #     res.append(out)
         
         return torch.cat(res, dim=0)
     

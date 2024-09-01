@@ -25,7 +25,7 @@ from numba import jit
 from sklearn.linear_model import Ridge
 
 from .tools.network import DayThreeRegulatoryNetwork
-from .models.spatial_map import xyc2spatial
+from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import ViTEstimatorV2, ViT, device
 
 from .tools.utils import (
@@ -94,15 +94,15 @@ class Oracle(ABC):
 
         space = pcs[:, :n_pca_dims]
 
-        if balanced:
-            bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
-                               metric=metric, mode="distance", n_jobs=n_jobs)
-            bknn.fit(space)
-            knn = bknn.kneighbors_graph(mode="distance")
-        else:
+        # if balanced:
+        #     bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
+        #                        metric=metric, mode="distance", n_jobs=n_jobs)
+        #     bknn.fit(space)
+        #     knn = bknn.kneighbors_graph(mode="distance")
+        # else:
 
-            knn = knn_distance_matrix(space, metric=metric, k=k,
-                                           mode="distance", n_jobs=n_jobs)
+        knn = knn_distance_matrix(space, metric=metric, k=k,
+                                        mode="distance", n_jobs=n_jobs)
         connectivity = (knn > 0).astype(float)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -391,12 +391,18 @@ class SpaceOracle(Oracle):
         clusters = np.array(adata.obs[annot])
         xy = np.array(adata.obsm['spatial'])
 
-        sp_maps = xyc2spatial(
-            xy[:, 0], 
-            xy[:, 1], 
-            clusters,
-            spatial_dim, spatial_dim, 
-            disable_tqdm=False
+        # sp_maps = xyc2spatial(
+        #     xy[:, 0], 
+        #     xy[:, 1], 
+        #     clusters,
+        #     spatial_dim, spatial_dim, 
+        #     disable_tqdm=False
+        # ).astype(np.float32)
+
+        sp_maps = xyc2spatial_fast(
+            xyc = np.column_stack([xy, clusters]),
+            m=spatial_dim,
+            n=spatial_dim,
         ).astype(np.float32)
 
         if in_place:
