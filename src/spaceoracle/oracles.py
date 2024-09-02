@@ -11,22 +11,18 @@ from dataclasses import dataclass
 from typing import List
 from tqdm import tqdm
 import os
-import shutil
 import datetime
 import re
 import glob
 import pickle
 import io
-from random import shuffle
 from sklearn.decomposition import PCA
 import warnings
-from scipy import sparse
-from numba import jit
 from sklearn.linear_model import Ridge
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
-from .models.estimators import ViTEstimatorV2, ViT, device
+from .models.estimators import PixelAttention, device
 
 from .tools.utils import (
     CPU_Unpickler,
@@ -191,9 +187,9 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='ones', 
-    max_epochs=10, spatial_dim=64, learning_rate=3e-4, batch_size=128, rotate_maps=True, cluster_grn=True, 
-    regularize=False, n_patches=4, n_heads=2, n_blocks=4, hidden_d=16):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
+    regularize=True, layer='imputed_count'):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -210,12 +206,9 @@ class SpaceOracle(Oracle):
         self.rotate_maps = rotate_maps
         self.cluster_grn = cluster_grn
         self.regularize = regularize
-        self.n_patches = n_patches
-        self.n_heads = n_heads
-        self.n_blocks = n_blocks
-        self.hidden_d = hidden_d
         self.beta_dict = None
         self.coef_matrix = None
+        self.layer = layer
 
         if 'spatial_maps' not in self.adata.obsm:
             self.imbue_adata_with_space(
@@ -255,7 +248,10 @@ class SpaceOracle(Oracle):
         while not self.queue.is_empty:
             gene = next(self.queue)
 
-            estimator = ViTEstimatorV2(self.adata, target_gene=gene)
+            # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
+
+            estimator = PixelAttention(
+                self.adata, target_gene=target_gene, layer=self.layer)
 
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -280,12 +276,8 @@ class SpaceOracle(Oracle):
                     init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
-                    regularize=self.regularize,
                     cluster_grn=self.cluster_grn,
-                    n_patches=self.n_patches, 
-                    n_heads=self.n_heads, 
-                    n_blocks=self.n_blocks, 
-                    hidden_d=self.hidden_d,
+                    regularize=self.regularize,
                     pbar=train_bar
                 )
 
