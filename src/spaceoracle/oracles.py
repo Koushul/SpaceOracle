@@ -251,7 +251,7 @@ class SpaceOracle(Oracle):
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
             estimator = PixelAttention(
-                self.adata, target_gene=target_gene, layer=self.layer)
+                self.adata, target_gene=gene, layer=self.layer)
 
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
