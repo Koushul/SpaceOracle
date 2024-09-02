@@ -20,7 +20,7 @@ from .spatial_map import xyc2spatial
 from .vit_blocks import ViT
 
 from ..tools.utils import set_seed, seed_worker, deprecated
-from ..tools.data import SpaceOracleDataset
+from ..tools.data import SpaceOracleDataset, SpaceOracleDatasetv2
 from ..tools.network import GeneRegulatoryNetwork, DayThreeRegulatoryNetwork
 
 set_seed(42)
@@ -185,6 +185,7 @@ class VisionEstimator(Estimator):
 
             if regularize:
                 loss += torch.mean((betas - torch.from_numpy(model.betas).float().to(device))**2)
+                # loss += torch.mean((betas[:, 1:] - batch_coefs.to(device))**2)
 
             loss.backward()
             optimizer.step()
@@ -214,12 +215,15 @@ class VisionEstimator(Estimator):
         for _, batch_x, batch_y, _ in dataloader:
             _x = batch_x.cpu().numpy()
             _y = batch_y.cpu().numpy()
+            # batch_coefs = batch_coefs.cpu().numpy().reshape(-1, )
             
             ols_pred = beta_init[0]
-
-            
             for w in range(len(beta_init)-1):
                 ols_pred += _x[:, w]*beta_init[w+1]
+
+            # ols_pred = 0
+            # for w in range(len(beta_init)-1):
+            #     ols_pred += _x[:, w]*batch_coefs[w]
                 
             ols_err = np.mean((_y - ols_pred)**2)
             
@@ -258,6 +262,16 @@ class VisionEstimator(Estimator):
             spatial_dim=spatial_dim,
             rotate_maps=rotate_maps
         )
+
+        # dataset = SpaceOracleDatasetv2(
+        #     adata.copy(), 
+        #     target_gene=target_gene, 
+        #     regulators=regulators, 
+        #     annot=annot, 
+        #     layer=layer,
+        #     spatial_dim=spatial_dim,
+        #     rotate_maps=rotate_maps
+        # )
         
 
         if mode == 'train':
@@ -708,7 +722,7 @@ class PixelAttention(VisionEstimator):
         ):
         
         assert annot in self.adata.obs.columns
-        assert init_betas in ['ones', 'ols', 'zeros']
+        assert init_betas in ['ones', 'ols', 'zeros', 'co']
 
         self.spatial_dim = spatial_dim  
         self.regularize = regularize
@@ -729,12 +743,12 @@ class PixelAttention(VisionEstimator):
             ols.fit(X, y)
             beta_init = ols.get_betas()
 
-        # elif init_betas == 'co':
-        #     co_coefs = self.grn.get_regulators_with_pvalues(
-        #         adata, self.target_gene).groupby('source').mean()
-        #     co_coefs = co_coefs.loc[self.regulators]
-        #     beta_init = np.array(co_coefs.values).reshape(-1, )
-        #     beta_init = np.concatenate([beta_init, [1]], axis=0) 
+        elif init_betas == 'co':
+            co_coefs = self.grn.get_regulators_with_pvalues(
+                adata, self.target_gene).groupby('source').mean()
+            co_coefs = co_coefs.loc[self.regulators]
+            beta_init = np.array(co_coefs.values).reshape(-1, )
+            beta_init = np.concatenate([beta_init, [1]], axis=0) 
 
         elif init_betas == 'zeros':
             beta_init = torch.zeros(len(self.regulators)+1)

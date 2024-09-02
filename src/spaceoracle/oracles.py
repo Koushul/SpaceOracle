@@ -320,6 +320,7 @@ class SpaceOracle(Oracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
+        estimator_dict['model'] = torch.compile(estimator_dict['model'])
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)

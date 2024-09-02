@@ -6,9 +6,10 @@ import warnings
 import numpy as np
 from torch.utils.data import Dataset
 from ..models.spatial_map import xyc2spatial
-from .network import GeneRegulatoryNetwork
+from .network import DayThreeRegulatoryNetwork, GeneRegulatoryNetwork
 from ..tools.utils import deprecated
 import torch
+import pandas as pd
 
 # Suppress ImplicitModificationWarning
 warnings.simplefilter(action='ignore', category=anndata.ImplicitModificationWarning)
@@ -113,6 +114,36 @@ class SpaceOracleDataset(SpatialDataset):
         return spatial_info, tf_exp, target_ene_exp, cluster_info
 
 
-@deprecated('Please use SpatialDataset.load_slideseq instead.')
-def load_example_slideseq(path_dir):
-    return [(i, anndata.read_h5ad(i)) for i in glob(path_dir + '/*.h5ad')]
+class SpaceOracleDatasetv2(SpaceOracleDataset):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.grn = DayThreeRegulatoryNetwork()
+        self._priors = {}
+        for k, v in self.grn.cluster_labels.items():
+            self._priors[int(k)] = self.get_celloracle_priors(k)
+
+    def get_celloracle_priors(self, celltype):
+        return (self.grn.links_day3_1[self.grn.cluster_labels[celltype]]
+            .query(f'target == "{self.target_gene}" and source.isin({self.regulators})')
+            .set_index('source').reindex(self.regulators)
+            .reset_index()).coef_mean.values
+
+    def __getitem__(self, index):
+        sp_map = self.spatial_maps[index]
+        # coef_priors = self.get_celloracle_priors(self.clusters[index])
+        coef_priors = self._priors[self.clusters[index]]
+
+        if self.rotate_maps:
+            k = np.random.choice([0, 1, 2, 3])
+            sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
+        spatial_info = torch.from_numpy(sp_map.copy()).float()
+        tf_exp = torch.from_numpy(self.X[index].copy()).float()
+        target_ene_exp = torch.from_numpy(self.y[index].copy()).float()
+        cluster_info = torch.tensor(self.clusters[index]).long()
+        coef_priors = torch.from_numpy(coef_priors).float()
+
+        assert spatial_info.shape[0] == self.n_clusters
+        assert spatial_info.shape[1] == spatial_info.shape[2] == self.spatial_dim
+
+        return spatial_info, tf_exp, target_ene_exp, cluster_info, coef_priors
