@@ -1,4 +1,4 @@
-from numba import jit
+from numba import jit, prange
 from tqdm import tqdm
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -24,7 +24,7 @@ def distance(point1, point2):
     x2, y2 = point2
     return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-
+@deprecated('`xyc2spatial` is deprecated. Use `xyc2spatial_fast` instead to save the trees 🌴️')
 def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     
     assert len(x) == len(y) == len(c)
@@ -36,7 +36,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     
     spatial_maps = np.zeros((len(x), m, n))
     mask = np.zeros((len(clusters), m, n))
-    with tqdm(total=len(xyc), disable=disable_tqdm, desc='🌍️ Generating spatial maps') as pbar:
+    with tqdm(total=len(xyc), disable=disable_tqdm, desc=f'🌍️ Generating {m}x{n} spatial maps') as pbar:
         
         for s, coord in enumerate(xyc):
             x_, y_, cluster = coord
@@ -56,10 +56,9 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
 
     # channel_wise_maps = spatial_maps*mask 
-    channel_wise_maps = (1.0/spatial_maps)*mask 
-    channel_wise_maps = gaussian_filter(channel_wise_maps, sigma=0.5)
-    
-
+    # channel_wise_maps = (1.0/spatial_maps)*mask
+    channel_wise_maps = (spatial_maps.max()/spatial_maps)*mask  
+    # channel_wise_maps = gaussian_filter(channel_wise_maps, sigma=0.5)
         
     assert channel_wise_maps.shape == (len(x), len(clusters), m, n)
     
@@ -69,3 +68,46 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
         return channel_wise_maps.sum(axis=1)
     
     
+@jit(nopython=True, parallel=True)
+def xyc2spatial_fast(xyc, m, n):
+    """
+    Converts spatial coordinates (x, y) and cluster labels (c) to a spatial \
+        distance map with grid sizes mxn. 
+    Each channels encodes the distance map for a unique cluster.
+    Note: The distance maps are reversed such that far away points are closer to 0.
+    Return (n_samples, n_clusters, m, n)
+    """
+
+    print(f'🌍️ Generating spatial {m}x{n} maps...')
+
+    x, y, c = xyc[:, 0], xyc[:, 1], xyc[:, 2]
+    xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
+    
+    centers = generate_grid_centers(m, n, xmin, xmax, ymin, ymax)
+    clusters = np.unique(c).astype(np.int32)
+    num_clusters = len(clusters)
+    
+    spatial_maps = np.zeros((len(xyc), num_clusters, m, n), dtype=np.float32)
+    mask = np.zeros((num_clusters, m, n), dtype=np.float32)
+    
+    for s in prange(len(xyc)):
+        x_, y_, cluster = xyc[s]
+        dist_map = np.array([distance((x_, y_), c) for c in centers]).reshape(m, n)
+        
+        nearest_center_idx = np.argmin(dist_map)
+        u, v = nearest_center_idx // n, nearest_center_idx % n
+        mask[int(cluster), u, v] = 1
+        
+        for i in range(num_clusters):
+            spatial_maps[s, i] = dist_map
+    
+    max_val = np.max(spatial_maps)
+    channel_wise_maps = np.zeros_like(spatial_maps)
+    
+    for s in prange(len(xyc)):
+        for i in range(num_clusters):
+            for j in range(m):
+                for k in range(n):
+                    channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
+
+    return channel_wise_maps

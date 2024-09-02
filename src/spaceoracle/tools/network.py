@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import pickle
 import os
+import json 
+import torch
 
 class GeneRegulatoryNetwork:
     def __init__(self, organism='mouse'):
@@ -42,6 +44,7 @@ class CellOracleLinks:
     def get_regulators(self, adata, target_gene):
         pass
 
+        
 
 class DayThreeRegulatoryNetwork(CellOracleLinks):
     """
@@ -52,14 +55,44 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
     def __init__(self):
 
         self.base_pth = os.path.join(
-                os.path.dirname(__file__), '..', '..', '..', 'data', 'slideseq')
+                os.path.dirname(__file__), '..', '..', '..', 'data')
 
-        with open(self.base_pth+'/celloracle_links_day3_1.pkl', 'rb') as f:
+        with open(self.base_pth+'/slideseq/celloracle_links_day3_1.pkl', 'rb') as f:
             self.links_day3_1 = pickle.load(f)
 
-        # with open(self.base_pth+'/celloracle_links_day3_2.pkl', 'rb') as f:
-        #     self.links_day3_2 = pickle.load(f)
+        with open(self.base_pth+'/celltype_assign.json', 'r') as f:
+            self.cluster_labels = json.load(f)
+    
+    def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
+        adata_clusters = np.unique(adata.obs['rctd_cluster'])
+        regulator_dict = {}
+        all_regulators = set()
 
+        for label in adata_clusters:
+            cluster = self.cluster_labels[str(label)]
+            grn_df = self.links_day3_1[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[label] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators
+    
     def get_regulators(self, adata, target_gene, alpha=0.05):
         regulators_with_pvalues = self.get_regulators_with_pvalues(adata, target_gene, alpha)
         grouped_regulators = regulators_with_pvalues.groupby('source').mean()
@@ -88,4 +121,3 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
                 for link_data in self.links_day3_1.values()], axis=0).reset_index(drop=True)
         return co_links.query(f'target.isin({str(list(adata.var_names))})').reset_index(drop=True)
     
-                
