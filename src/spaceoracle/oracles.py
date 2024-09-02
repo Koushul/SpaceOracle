@@ -304,8 +304,13 @@ class SpaceOracle(Oracle):
 
             model = NicheAttentionNetwork(
                 np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
-            loaded_dict['model'] = model.load_state_dict(loaded_dict['model'])
-
+            model.load_state_dict(loaded_dict['model'])
+            
+            loaded_dict['model'] = model
+        
+        return loaded_dict
+    
+    
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names
