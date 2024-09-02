@@ -5,11 +5,18 @@ from spaceoracle import SpaceOracle
 
 import os
 os.environ["OMP_NESTED"] = "FALSE"
+import anndata
+import scanpy as sc
+import numpy as np
+from spaceoracle import SpaceOracle
 
-n_top_genes = 4000
+
+n_top_genes = 5500
 min_cells = 10
-min_counts = 350
+min_counts = 100
 spatial_dim = 64
+
+genes_of_interest = ['Il2', 'Il2ra', 'Prdm1']
 
 adata_train = anndata.read_h5ad('../data/slideseq/day3_1.h5ad')
 adata_test = anndata.read_h5ad('../data/slideseq/day3_2.h5ad')
@@ -29,7 +36,7 @@ sc.pp.log1p(adata_train)
 sc.pp.highly_variable_genes(
     adata_train, flavor="seurat", n_top_genes=n_top_genes)
 
-adata_train = adata_train[:, adata_train.var.highly_variable]
+adata_train = adata_train[:, (adata_train.var.highly_variable | adata_train.var_names.isin(genes_of_interest))]
 
 
 adata_test.var_names_make_unique()
@@ -47,10 +54,12 @@ sc.pp.log1p(adata_test)
 sc.pp.highly_variable_genes(
     adata_test, flavor="seurat", n_top_genes=n_top_genes)
 
-adata_test = adata_test[:, adata_test.var.highly_variable]
+adata_test = adata_test[:, (adata_test.var.highly_variable | adata_test.var_names.isin(genes_of_interest))]
 
-adata_train = adata_train[:, adata_train.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
-adata_test = adata_test[:, adata_test.var_names.isin(np.intersect1d(adata_train.var_names, adata_test.var_names))]
+adata_train = adata_train[:, adata_train.var_names.isin(
+    np.intersect1d(adata_train.var_names, adata_test.var_names))]
+adata_test = adata_test[:, adata_test.var_names.isin(
+    np.intersect1d(adata_train.var_names, adata_test.var_names))]
 
 adata_train.layers["normalized_count"] = adata_train.to_df().values
 adata_test.layers["normalized_count"] = adata_test.to_df().values

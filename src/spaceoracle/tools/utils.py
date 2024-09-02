@@ -7,7 +7,7 @@ import warnings
 import pickle
 from sklearn.neighbors import kneighbors_graph, NearestNeighbors
 from scipy import sparse
-
+import io
 
 class CPU_Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
