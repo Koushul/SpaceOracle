@@ -684,7 +684,7 @@ class PixelAttention(VisionEstimator):
                 best_model = copy.deepcopy(model)
                 best_iter = epoch
             
-            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} | Baseline: {baseline_loss:.4f}'
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4g} | Baseline: {baseline_loss:.4g}'
             pbar.update()
             
         best_model.eval()

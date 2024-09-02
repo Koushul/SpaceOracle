@@ -23,6 +23,7 @@ from sklearn.linear_model import Ridge
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
+from .models.pixel_attention import NicheAttentionNetwork
 
 from .tools.utils import (
     CPU_Unpickler,
@@ -262,7 +263,7 @@ class SpaceOracle(Oracle):
                 gene_bar.desc = f'{len(self.queue.orphans)} orphans'
                 gene_bar.refresh()
 
-                if os.path.exists(f'{self.model_dir}/{gene}.lock'):
+                if os.path.exists(f'{self.queue.model_dir}/{gene}.lock'):
                     continue
 
                 self.queue.create_lock(gene)
@@ -285,7 +286,7 @@ class SpaceOracle(Oracle):
                 assert target_gene == gene
 
                 with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump({'model': model, 'regulators': regulators}, f)
+                    pickle.dump({'model': model.state_dict(), 'regulators': regulators}, f)
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
                     del model
@@ -297,18 +298,22 @@ class SpaceOracle(Oracle):
             train_bar.start = time.time()
 
     @staticmethod
-    def load_estimator(gene, save_dir):
+    def load_estimator(gene, spatial_dim, nclusters, save_dir):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
-            # return pickle.load(f)
-            return CPU_Unpickler(f).load()
+            loaded_dict =  CPU_Unpickler(f).load()
+
+            model = NicheAttentionNetwork(
+                np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
+            loaded_dict['model'] = model.load_state_dict(loaded_dict['model'])
 
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names
         assert self.annot in adata.obs.columns
         assert 'spatial_maps' in adata.obsm.keys()
+        nclusters = len(np.unique(adata.obs[self.annot]))
 
-        estimator_dict = self.load_estimator(target_gene, self.save_dir)
+        estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
