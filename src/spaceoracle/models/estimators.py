@@ -185,11 +185,12 @@ class VisionEstimator(Estimator):
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
 
             if regularize:
-                loss += 1e-5*torch.mean((betas[:, 1:] - torch.from_numpy(model.betas[1:]).float().to(device))**2)
+                loss += 1e-5*torch.mean(
+                    (betas[:, 1:] - torch.from_numpy(model.betas[1:]).float().to(device))**2)
 
                 # kl_divergence = F.kl_div(
-                #     F.log_softmax(betas, dim=1),
-                #     F.softmax(torch.from_numpy(model.betas).float().to(device), dim=0),
+                #     F.log_softmax(betas[:, 1:], dim=1),
+                #     F.softmax(torch.from_numpy(model.betas[1:]).float().to(device), dim=0),
                 #     reduction='batchmean'
                 # )
                 
@@ -596,7 +597,7 @@ class SpatialInsights(VisionEstimator):
             co_coefs = self.grn.get_regulators_with_pvalues(adata, self.target_gene).groupby('source').mean()
             co_coefs = co_coefs.loc[self.regulators]
             beta_init = np.array(co_coefs.values).reshape(-1, )
-            beta_init = np.concatenate([beta_init, [1]], axis=0) 
+            beta_init = np.concatenate([[1], beta_init], axis=0) 
             
         self.beta_init = np.array(beta_init).reshape(-1, )
 
@@ -759,7 +760,7 @@ class PixelAttention(VisionEstimator):
                 adata, self.target_gene).groupby('source').mean()
             co_coefs = co_coefs.loc[self.regulators]
             beta_init = np.array(co_coefs.values).reshape(-1, )
-            beta_init = np.concatenate([beta_init, [1]], axis=0) 
+            beta_init = np.concatenate([[1], beta_init], axis=0) 
 
         elif init_betas == 'zeros':
             beta_init = torch.zeros(len(self.regulators)+1)
