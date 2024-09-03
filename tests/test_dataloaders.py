@@ -6,6 +6,7 @@ import unittest
 import numpy as np
 import anndata
 import torch
+import spaceoracle
 from spaceoracle.tools.data import SpaceOracleDataset, SpatialDataset
 from spaceoracle.models.estimators import ViTEstimatorV2
 from torch.utils.data import DataLoader
@@ -25,6 +26,11 @@ class TestSpaceOracleDataset(unittest.TestCase):
         self.adata = anndata.AnnData(X=X, obs=obs, var=var, obsm=obsm)
         self.adata.layers['normalized_count'] = X
         self.adata.var_names = self.adata.var['gene_symbols']
+
+        pcs = spaceoracle.oracles.Oracle.perform_PCA(self.adata)
+        spaceoracle.oracles.Oracle.knn_imputation(self.adata, pcs)
+
+
 
     def test_spaceoracle_dataset(self):
         target_gene = 'gene_0'

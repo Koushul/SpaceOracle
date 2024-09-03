@@ -8,7 +8,7 @@
 #SBATCH --mem-per-cpu=300G
 #SBATCH --cluster=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=0-24:00:00
+#SBATCH --time=0-3:00:00
 
 mamba deactivate
 mamba activate SpaceOracle

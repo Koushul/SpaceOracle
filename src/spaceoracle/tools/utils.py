@@ -4,6 +4,57 @@ import random
 import functools
 import inspect
 import warnings
+import pickle
+from sklearn.neighbors import kneighbors_graph, NearestNeighbors
+from scipy import sparse
+import io
+
+class CPU_Unpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if module == 'torch.storage' and name == '_load_from_bytes':
+            return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+        else:
+            return super().find_class(module, name)
+
+
+def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
+    """Calculate a nearest neighbour distance matrix
+
+    Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
+    To achieve that we call kneighbors_graph with X = None
+    """
+    if metric == "correlation":
+        nn = NearestNeighbors(
+            n_neighbors=k, metric="correlation", 
+            algorithm="brute", n_jobs=n_jobs)
+        nn.fit(data)
+        return nn.kneighbors_graph(X=None, mode=mode)
+    else:
+        nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
+        nn.fit(data)
+        return nn.kneighbors_graph(X=None, mode=mode)
+
+def connectivity_to_weights(mknn, axis=1):
+    if type(mknn) is not sparse.csr_matrix:
+        mknn = mknn.tocsr()
+    return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
+
+def convolve_by_sparse_weights(data, w):
+    w_ = w.T
+    assert np.allclose(w_.sum(0), 1)
+    return sparse.csr_matrix.dot(data, w_)
+
+
+def _adata_to_matrix(adata, layer_name, transpose=True):
+    if isinstance(adata.layers[layer_name], np.ndarray):
+        matrix = adata.layers[layer_name].copy()
+    else:
+        matrix = adata.layers[layer_name].todense().A.copy()
+
+    if transpose:
+        matrix = matrix.transpose()
+
+    return matrix.copy(order="C")
 
 
 class DeprecatedWarning(UserWarning):
