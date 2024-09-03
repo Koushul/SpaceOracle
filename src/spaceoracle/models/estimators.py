@@ -185,7 +185,7 @@ class VisionEstimator(Estimator):
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
 
             if regularize:
-                loss += 1e-5*torch.mean(
+                loss += 1e-3*torch.mean(
                     (betas[:, 1:] - torch.from_numpy(model.betas[1:]).float().to(device))**2)
 
                 # kl_divergence = F.kl_div(
