@@ -24,6 +24,8 @@ import glob
 import pickle
 import io
 from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+from scipy import sparse
 import warnings
 from sklearn.linear_model import Ridge
 
@@ -102,7 +104,6 @@ class Oracle(ABC):
             b_sight = int(k * 8)
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
-
 
         space = pcs[:, :n_pca_dims]
 
@@ -521,7 +522,7 @@ class Oracle(ABC):
         K_W = K_W / K_W.sum(1)[:, None]
         self.tr = 0.8 * self.tr + 0.2 * K_W
         self.tr = self.tr / self.tr.sum(1)[:, None]
-        self.tr = scipy.sparse.csr_matrix(self.tr)
+        self.tr = scipy.csr_matrix(self.tr)
 
         if hasattr(self, "corrcoef_random"):
             if direction == "forward":
@@ -853,6 +854,7 @@ class SpaceOracle(Oracle, Oracle_visualization):
                 r = np.array(_beta_out.regulators_index)
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
+<<<<<<< HEAD
         return sparse_tensor
     
     def simulate_shift(self, gex_dict={}):
@@ -860,14 +862,39 @@ class SpaceOracle(Oracle, Oracle_visualization):
         gexidx_dict = {genes.index(goi) : v for goi, v in gex_dict.items()}
         coef_matrix = self.get_coef_matrix(self.adata.copy())
         gene_mtx = self.adata.to_df().values
+=======
+        return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
-        gem_simulated = self.perturb(gene_mtx, coef_matrix, gex_dict=gexidx_dict) 
-        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
 
+    def simulate_shift(self, perturb_condition={}, n_propagation=3):
+        '''multi-gene level perturbation'''
+>>>>>>> ae1eddd (fix from merge)
 
+        gene_mtx = self.adata.to_df().values
+        simulation_input = gene_mtx.copy()
+
+        for gene, gex in perturb_condition.items():
+            target_index = self.gene2index[gene]
+            simulation_input[:, target_index] = gex
+        
+        delta_input = simulation_input - gene_mtx
+        delta_simulated = delta_input.copy()
+
+<<<<<<< HEAD
     def perturb(self, gene_mtx, sparse_tensor, gex_dict, n_propagation=3):
         assert sparse_tensor.shape == (gene_mtx.shape[1], gene_mtx.shape[1], gene_mtx.shape[0])
         
+=======
+        gem_simulated = self.get_gem_simulated(gene_mtx, delta_input, delta_simulated, n_propagation) 
+        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
+    
+    def perturb(self, gene_mtx, target, n_propagation=3):
+        '''single gene knock-out'''
+
+        assert target in self.adata.var_names
+
+        target_index = self.gene2index[target]  
+>>>>>>> ae1eddd (fix from merge)
         simulation_input = gene_mtx.copy()
 
         for goi, gex in gex_dict.items():
@@ -876,6 +903,12 @@ class SpaceOracle(Oracle, Oracle_visualization):
         simulation_input[:, target_index] = 0 # ko target gene
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
+
+        gem_simulated = self.get_gem_simulated(gene_mtx, delta_input, delta_simulated, n_propagation)
+        return gem_simulated
+
+    def get_gem_simulated(self, gene_mtx, delta_input, delta_simulated, n_propagation):
+        '''perturb helper function'''
 
         if self.beta_dict is None:
             self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
@@ -986,7 +1019,7 @@ class SpaceOracle(Oracle, Oracle_visualization):
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        simulation_input[target] = 0 # ko target gene
+        simulation_input[target_index] = 0 # ko target gene
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
 
@@ -995,7 +1028,8 @@ class SpaceOracle(Oracle, Oracle_visualization):
         
         for i in range(n_propagation):
             delta_simulated = delta_simulated.dot(self.coef_matrix)
-            delta_simulated[delta_input != 0] = delta_input
+            # delta_simulated[delta_input != 0] = delta_input
+            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
             gem_tmp = gene_mtx + delta_simulated
             gem_tmp[gem_tmp<0] = 0
             delta_simulated = gem_tmp - gene_mtx
@@ -1009,6 +1043,7 @@ class SpaceOracle(Oracle, Oracle_visualization):
 # def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
 #     """Calculate a nearest neighbour distance matrix
 
+<<<<<<< HEAD
 #     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
 #     To achieve that we call kneighbors_graph with X = None
 #     """
@@ -1047,6 +1082,8 @@ class SpaceOracle(Oracle, Oracle_visualization):
 #     return matrix.copy(order="C")
 =======
     
+=======
+>>>>>>> ae1eddd (fix from merge)
 def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
     """Calculate a nearest neighbour distance matrix
 
