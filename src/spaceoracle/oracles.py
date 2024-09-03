@@ -856,14 +856,16 @@ class SpaceOracle(Oracle, Oracle_visualization):
         return sparse_tensor
     
     def simulate_shift(self, gex_dict={}):
+        genes = list(self.adata.to_df().columns)
+        gexidx_dict = {genes.index(goi) : v for goi, v in gex_dict.items()}
         coef_matrix = self.get_coef_matrix(self.adata.copy())
         gene_mtx = self.adata.to_df().values
 
-        perturbed_matrix = self.perturb(gene_mtx, coef_matrix, gex_dict=gex_dict)
-        self.adata.layers['delta_X'] = self.adata.layers['imputed_count'] - perturbed_matrix
+        gem_simulated = self.perturb(gene_mtx, coef_matrix, gex_dict=gexidx_dict) 
+        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
 
 
-    def perturb(self, gene_mtx, sparse_tensor, n_propagation=3, gex_dict = {74 : 0.0}):
+    def perturb(self, gene_mtx, sparse_tensor, gex_dict, n_propagation=3):
         assert sparse_tensor.shape == (gene_mtx.shape[1], gene_mtx.shape[1], gene_mtx.shape[0])
         
         simulation_input = gene_mtx.copy()
