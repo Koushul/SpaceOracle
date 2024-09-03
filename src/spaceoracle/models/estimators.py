@@ -10,7 +10,7 @@ import copy
 from tqdm import tqdm 
 import enlighten
 from numba import jit
-
+import torch.nn.functional as F
 import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
@@ -168,9 +168,10 @@ class VisionEstimator(Estimator):
         mask = torch.stack(relevant_tfs).to(device)
         return betas * mask
 
-    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False, regularize=False, lambd=1e-3, a=0.9):
+    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False, regularize=False):
         model.train()
         total_loss = 0
+
         for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
             
             optimizer.zero_grad()
@@ -184,8 +185,18 @@ class VisionEstimator(Estimator):
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
 
             if regularize:
-                loss += torch.mean((betas - torch.from_numpy(model.betas).float().to(device))**2)
-                # loss += torch.mean((betas[:, 1:] - batch_coefs.to(device))**2)
+                loss += 1e-5*torch.mean((betas[:, 1:] - torch.from_numpy(model.betas[1:]).float().to(device))**2)
+
+                # kl_divergence = F.kl_div(
+                #     F.log_softmax(betas, dim=1),
+                #     F.softmax(torch.from_numpy(model.betas).float().to(device), dim=0),
+                #     reduction='batchmean'
+                # )
+                
+                # # Add KL divergence to the loss
+                # loss += 1e-8*kl_divergence
+                    
+                
 
             loss.backward()
             optimizer.step()

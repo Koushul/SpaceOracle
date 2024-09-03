@@ -62,27 +62,27 @@ class SpaceOracleDataset(SpatialDataset):
         self.n_clusters = len(np.unique(self.clusters))
         self.xy = np.array(self.adata.obsm['spatial'])
 
-        # from sklearn.utils import resample
-        # unique_clusters, counts = np.unique(self.clusters, return_counts=True)
-        # max_count = max(counts)
-        # upsampled_X = self.X.copy()
-        # upsampled_y = self.y.copy()
-        # upsampled_clusters = self.clusters.copy()
-        # upsampled_xy = self.xy.copy()
+        from sklearn.utils import resample
+        unique_clusters, counts = np.unique(self.clusters, return_counts=True)
+        max_count = max(counts)
+        upsampled_X = self.X.copy()
+        upsampled_y = self.y.copy()
+        upsampled_clusters = self.clusters.copy()
+        upsampled_xy = self.xy.copy()
 
-        # for cluster in unique_clusters:
-        #     if counts[cluster] < max_count:
-        #         indices = np.where(self.clusters == cluster)[0]
-        #         upsampled_indices = resample(indices, n_samples=max_count - counts[cluster], replace=True)
-        #         upsampled_X = np.vstack((upsampled_X, self.X[upsampled_indices]))
-        #         upsampled_y = np.vstack((upsampled_y, self.y[upsampled_indices]))
-        #         upsampled_clusters = np.hstack((upsampled_clusters, self.clusters[upsampled_indices]))
-        #         upsampled_xy = np.vstack((upsampled_xy, self.xy[upsampled_indices]))
+        for cluster in unique_clusters:
+            if counts[cluster] < max_count:
+                indices = np.where(self.clusters == cluster)[0]
+                upsampled_indices = resample(indices, n_samples=max_count - counts[cluster], replace=True)
+                upsampled_X = np.vstack((upsampled_X, self.X[upsampled_indices]))
+                upsampled_y = np.vstack((upsampled_y, self.y[upsampled_indices]))
+                upsampled_clusters = np.hstack((upsampled_clusters, self.clusters[upsampled_indices]))
+                upsampled_xy = np.vstack((upsampled_xy, self.xy[upsampled_indices]))
 
-        # self.X = upsampled_X
-        # self.y = upsampled_y
-        # self.clusters = upsampled_clusters
-        # self.xy = upsampled_xy
+        self.X = upsampled_X
+        self.y = upsampled_y
+        self.clusters = upsampled_clusters
+        self.xy = upsampled_xy
 
         if 'spatial_maps' in self.adata.obsm:
             self.spatial_maps = self.adata.obsm['spatial_maps']

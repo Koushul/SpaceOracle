@@ -340,6 +340,19 @@ class SpaceOracle(Oracle):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
+    
+    def _get_gene_gene_matrix(self, cell_index):
+        genes = self.adata.var_names
+        gene_gene_matrix = np.zeros((len(genes), len(genes)))
+
+        for i, gene in enumerate(genes):
+            _beta_out = self.beta_dict.get(gene, None)
+            
+            if _beta_out is not None:
+                r = np.array(_beta_out.regulators_index)
+                gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+
+        return gene_gene_matrix
 
 
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
