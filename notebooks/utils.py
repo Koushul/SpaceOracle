@@ -64,10 +64,10 @@ adata_test = adata_test[:, adata_test.var_names.isin(
 adata_train.layers["normalized_count"] = adata_train.to_df().values
 adata_test.layers["normalized_count"] = adata_test.to_df().values
 
-SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, in_place=True)
-pcs = SpaceOracle.perform_PCA(adata_train)
-SpaceOracle.knn_imputation(adata_train, pcs)
+# SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, in_place=True)
+# pcs = SpaceOracle.perform_PCA(adata_train)
+# SpaceOracle.knn_imputation(adata_train, pcs)
 
-SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
-pcs = SpaceOracle.perform_PCA(adata_test)
-SpaceOracle.knn_imputation(adata_test, pcs)
+# SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
+# pcs = SpaceOracle.perform_PCA(adata_test)
+# SpaceOracle.knn_imputation(adata_test, pcs)
