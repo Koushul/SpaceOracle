@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.h5ad
 /src/wandb/*
+notebooks/beta_dict.pickle
+notebooks/coef_matrix.csv
+
 
 # C extensions
 *.so
