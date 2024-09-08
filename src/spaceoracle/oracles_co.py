@@ -79,10 +79,8 @@ class CellOracle:
             delta_simulated = gem_tmp - gene_mtx
 
         gem_simulated = gene_mtx + delta_simulated
-        self.gem_simulated = gem_simulated
+        self.adata.layers['perturbed_co'] = gem_simulated        
         self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
-
-
 
     def estimate_transition_prob(self,
                                  n_neighbors: int=None,

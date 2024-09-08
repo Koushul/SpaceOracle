@@ -392,7 +392,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         delta_simulated = delta_input.copy()
 
         gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation) 
-        self.gem_simulated = gem_simulated
+        self.adata.layers['perturbed_so'] = gem_simulated
         self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
     
     def perturb(self, gene_mtx, target, n_propagation=3):
