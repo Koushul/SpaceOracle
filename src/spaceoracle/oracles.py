@@ -593,6 +593,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         gem_simulated = gene_mtx + delta_simulated
 
         return gem_simulated
+<<<<<<< HEAD
 
 
 <<<<<<< HEAD
@@ -737,3 +738,5 @@ def update_adata(adata):
 =======
         pass
 >>>>>>> e470ac6 (separate co functions, get adata_train co links)
+=======
+>>>>>>> 132f03a (co inference)

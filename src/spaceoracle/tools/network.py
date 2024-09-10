@@ -140,6 +140,9 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
 
         with open(self.base_pth+'/slideseq/celloracle_links_day3_1.pkl', 'rb') as f:
             self.links_day3_1 = pickle.load(f)
+        
+        with open(self.base_pth+'/slideseq/celloracle_links_day3_1.pkl', 'rb') as f:
+            self.coef_matrix_per_cluster = pickle.load(f)
 
         self.annot = 'rctd_cluster'
 
