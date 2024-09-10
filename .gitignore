@@ -166,3 +166,5 @@ cython_debug/
 
 
 /notebooks/models/
+/data/slideseq/*.pkl
+
