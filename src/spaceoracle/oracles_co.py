@@ -14,7 +14,7 @@ from tqdm import tqdm
 import math                            
 import matplotlib.pyplot as plt   
 
-from .oracle_utility import _adata_to_df, _get_clustercolor_from_anndata
+from .oracle_utility import _adata_to_df, _get_clustercolor_from_anndata, _linklist2dict
 from .tools.utils import _adata_to_matrix
 
 
@@ -53,7 +53,6 @@ class CellOracle:
         gene_gene_matrix = np.array(gene_gene_matrix)
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
-
     def simulate_co_shift(self, perturb_condition={}, n_propagation=3):
         '''adapted function to test against CO results'''
         gene_mtx = self.adata.layers['imputed_count']
@@ -65,6 +64,9 @@ class CellOracle:
         
         delta_input = simulation_input - gene_mtx
         delta_simulated = delta_input.copy()
+
+        if not hasattr(self, 'co_beta_dict'):
+            self.co_beta_dict = self.grn.coef_matrix_per_cluster
 
         # do_simulation
         for n in range(n_propagation):

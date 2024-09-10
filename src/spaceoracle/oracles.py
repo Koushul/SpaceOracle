@@ -531,18 +531,3 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         gem_simulated = gene_mtx + delta_simulated
 
         return gem_simulated
-
-
-## taken directly from CO
-def update_adata(adata):
-    # Update Anndata
-    # Anndata generated with Scanpy 1.4 or less should be updated with this function
-    # This function will be depricated in the future.
-
-    try:
-        lo = adata.uns['draw_graph']['params']['layout']
-        if isinstance(lo, np.ndarray):
-            lo = lo[0]
-        adata.uns['draw_graph']['params']['layout'] = lo
-    except:
-        pass
