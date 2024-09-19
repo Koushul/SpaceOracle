@@ -181,6 +181,9 @@ class VisionEstimator(Estimator):
 
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
 
+            # loss += 1e-3*torch.mean(
+            #     (betas - torch.zeros_like(betas).float().to(device))**2)
+
             loss.backward()
             optimizer.step()
             total_loss += loss.item()

@@ -1,5 +1,7 @@
+import pyro
 from pyro.infer import Predictive
 from pyro.infer.autoguide import AutoDiagonalNormal
+from pyro.nn import PyroModule
 from pysal.model.spreg import OLS
 import torch.nn.functional as F
 from torch.nn.modules.conv import _ConvNd
@@ -83,11 +85,14 @@ class ConditionalConv2D(_ConvNd):
         res = []
         
         assert inputs.shape[0] == input_labels.shape[0]
-
         pooled_inputs = self._avg_pooling(inputs)
         routing_weights = self._routing_fn(pooled_inputs, input_labels)
-        kernels = torch.sum(routing_weights[:, :, None, None, None, None] * self.weight, 1)
         
+        # Get the index of the highest weight for each input
+        max_weight_indices = torch.argmax(routing_weights, dim=1)
+        
+        # Select the kernel with the highest weight for each input
+        kernels = self.weight[max_weight_indices]
         for inputx, kernel in zip(inputs, kernels):
             out = self._conv_forward(inputx.unsqueeze(0), kernel)
             res.append(out)
@@ -139,14 +144,15 @@ class NicheAttentionNetwork(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(128, 64),
             nn.PReLU(init=0.1),
-            nn.Linear(64, 32),
-            nn.PReLU(init=0.1),
-            nn.Linear(32, self.dim)
+            nn.Linear(64, self.dim)
         )
 
         self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
+        self.output_activation = nn.SiLU()
+
     def forward(self, spatial_maps, cluster_info):
+        # spatial_maps = torch.sigmoid(spatial_maps)
         att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
         out = att * spatial_maps
         out = self.conv_layers(out)
@@ -154,5 +160,7 @@ class NicheAttentionNetwork(nn.Module):
         out = out + emb 
 
         betas = self.mlp(out)
-        
+        betas = self.output_activation(betas)
+        betas = betas.clip(max=3)
+
         return betas

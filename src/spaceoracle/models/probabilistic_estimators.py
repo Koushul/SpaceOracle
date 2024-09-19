@@ -1,3 +1,4 @@
+import pandas as pd
 from spaceoracle.models.base_estimators import BayesianRegression, device
 from spaceoracle.models.estimators import VisionEstimator
 from .pixel_attention import NicheAttentionNetwork
@@ -108,6 +109,21 @@ class ProbabilisticPixelAttention(VisionEstimator):
             y_pred += anchors[:, w+1]*betas[:, w+1]*inputs_x[:, w]
 
         return y_pred
+    
+
+    # To test if values are significant in a Bayesian model, we can use the posterior distributions of the parameters.
+    # A common approach is to compute the credible intervals (CIs) for the parameters of interest.
+    # If the credible interval does not include zero, we can consider the effect to be significant.
+    # So a marginal posterior distribution for a given IV that does not include 0 in the 95% HDI 
+    # just shows that 95% of the most likely parameter values based on the data do not include zero. 
+    
+    def test_significance(self, betas, alpha=0.05):
+        lower_bound = np.percentile(betas, 100 * (alpha / 2), axis=0)
+        upper_bound = np.percentile(betas, 100 * (1 - alpha / 2), axis=0)
+        significant = (lower_bound > 0) | (upper_bound < 0)
+        
+        return significant
+
 
 
     def fit(
@@ -154,6 +170,16 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 cluster=cluster, 
                 num_samples=1000
             )
+
+        self.is_real = pd.DataFrame(
+            [self.test_significance(self.beta_dists[i][:, 1:]) for i in self.beta_dists.keys()], 
+            columns=self.regulators
+        ).T
+
+        for c in self.is_real.columns:
+            for ix, s in enumerate(self.is_real[c].values):
+                if not s:
+                    self.beta_dists[c][:, ix+1] = 0
 
 
         del X, y, cluster_labels
