@@ -129,13 +129,14 @@ class SimpleCNN(nn.Module):
         return betas
 
 
-class VisionEstimator(AbstractEstimator):
-    def __init__(self, adata, target_gene, grn=None, regulators=None, layer='imputed_count'):
+class VisionEstimator(Estimator):
+    def __init__(self, adata, target_gene, co_grn, regulators=None, n_clusters=None, layer='imputed_count', annot='rctd_cluster'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
 
         self.adata = adata
         self.target_gene = target_gene
+<<<<<<< HEAD
         if grn is None:
             # self.grn = GeneRegulatoryNetwork()
             # self.grn = SurveyRegulatoryNetwork()
@@ -145,6 +146,14 @@ class VisionEstimator(AbstractEstimator):
         
         if regulators == None:
             self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
+=======
+
+        self.grn = co_grn
+
+        if regulators == None and n_clusters == None:
+            self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene, cluster_name=annot)
+            self.n_clusters = len(self.adata.obs[annot].unique())
+>>>>>>> a8ec843 (visium)
         else:
             self.regulators = regulators
 
@@ -476,6 +485,7 @@ class ViTEstimatorV2(VisionEstimator):
         rotate_maps,
         regularize,
         cluster_grn,
+        grn,
         n_patches=2, n_blocks=4, hidden_d=14, n_heads=2,
         pbar=None
         ):

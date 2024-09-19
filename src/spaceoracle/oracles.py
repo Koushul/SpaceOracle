@@ -26,12 +26,6 @@ from sklearn.neighbors import NearestNeighbors
 from scipy import sparse
 import warnings
 from sklearn.linear_model import Ridge
-<<<<<<< HEAD
-
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
-
-=======
->>>>>>> e470ac6 (separate co functions, get adata_train co links)
 from typing import Tuple, Optional, List
 
 from .oracles_co import CellOracle
@@ -208,12 +202,16 @@ class OracleQueue:
 
 class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
-    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
+    regularize=True, layer='imputed_count', co_grn=None):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        if co_grn == None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = co_grn
+        
         self.save_dir = save_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
@@ -271,8 +269,8 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            # estimator = PixelAttention(
-            #     self.adata, target_gene=gene, layer=self.layer)
+            estimator = PixelAttention(
+                self.adata, target_gene=gene, layer=self.layer, co_grn=self.grn, annot=self.annot)
 
             estimator = ProbabilisticPixelAttention(
                 self.adata, target_gene=gene, layer=self.layer)
@@ -352,7 +350,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-        beta_dists = estimator_dict.get('beta_dists', None)
+       # estimator_dict['model'] = torch.compile(estimator_dict['model'])
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
@@ -371,9 +369,12 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         )
 
 
-    def _get_spatial_betas_dict(self):
+    def _get_spatial_betas_dict(self, genes=None):
         beta_dict = {}
-        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
+        if genes == None:
+            genes = self.queue.completed_genes
+
+        for gene in tqdm(genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
@@ -405,21 +406,11 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
                 r = np.array(_beta_out.regulators_index)
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
-<<<<<<< HEAD
-        return sparse_tensor
-    
-    def simulate_shift(self, gex_dict={}):
-        genes = list(self.adata.to_df().columns)
-        gexidx_dict = {genes.index(goi) : v for goi, v in gex_dict.items()}
-        coef_matrix = self.get_coef_matrix(self.adata.copy())
-        gene_mtx = self.adata.to_df().values
-=======
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
     def simulate_shift(self, perturb_condition={}, n_propagation=3):
         '''multi-gene level perturbation'''
->>>>>>> ae1eddd (fix from merge)
 
         gene_mtx = self.adata.layers['imputed_count']
         simulation_input = gene_mtx.copy()
@@ -523,7 +514,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
 <<<<<<< HEAD
     def compute_betas(self):
-        self.beta_dict = self._get_spatial_betas_dict()
+        self.beta_dict = self._get_spatial_betas_dict(genes=genes)
         self.coef_matrix = self._get_co_betas()
 
 

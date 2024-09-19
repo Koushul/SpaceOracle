@@ -26,9 +26,9 @@ class CellOracle:
 
         # update color information
         col_dict = _get_clustercolor_from_anndata(adata=self.adata,
-                                                  cluster_name=self.cluster_column_name,
+                                                  cluster_name=self.annot,
                                                   return_as="dict")
-        self.colorandum = np.array([col_dict[i] for i in self.adata.obs[self.cluster_column_name]])
+        self.colorandum = np.array([col_dict[i] for i in self.adata.obs[self.annot]])
 
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
@@ -39,12 +39,12 @@ class CellOracle:
         ax.view_init(elev=elev, azim=azim)
 
     def _perturb_co_single_cell(self, gex_delta, cell_index, betas_dict):
+        # this may be inefficient, but calculations performed like in SO for verification
 
         genes = self.adata.var_names
 
         gene_gene_matrix = [] # columns are target genes, rows are regulators
-        cluster = list(self.adata.obs['louvain_annot'])[cell_index]
-        beta_dict = betas_dict[cluster]
+        beta_dict = betas_dict.get(cell_index, 1)
 
         for i, gene in enumerate(genes):
             _beta_out = beta_dict.iloc[i]
@@ -52,6 +52,28 @@ class CellOracle:
 
         gene_gene_matrix = np.array(gene_gene_matrix)
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
+
+    def get_co_cell_betas(self):
+        gene_order = self.adata.var_names
+        if hasattr(self.grn, 'coef_matrix_per_cluster'):
+            base_grn_coefs = self.grn.coef_matrix_per_cluster
+            for key, df in base_grn_coefs.items():
+                base_grn_coefs[key] = df.reindex(columns=gene_order, index=gene_order, fill_value=0)
+        else:
+            base_grn_dfs = self.grn.links_day3_1
+
+            base_grn_coefs = {}
+            for cluster, df in base_grn_dfs.items(): 
+                coef_mat = df.pivot(index='source', columns='target', values='coef_mean').fillna(0) # rows and cols may be switched
+                coef_mat = coef_mat.reindex(index=gene_order, columns=gene_order, fill_value=0)
+                base_grn_coefs[cluster] = coef_mat
+
+        betas_dict = {}
+        for i, cell_cluster in enumerate(list(self.adata.obs[self.annot])):
+            cell_coef = base_grn_coefs[cell_cluster]
+            betas_dict[i] = cell_coef
+
+        return betas_dict
 
     def simulate_co_shift(self, perturb_condition={}, n_propagation=3):
         '''adapted function to test against CO results'''
@@ -66,7 +88,7 @@ class CellOracle:
         delta_simulated = delta_input.copy()
 
         if not hasattr(self, 'co_beta_dict'):
-            self.co_beta_dict = self.grn.coef_matrix_per_cluster
+            self.co_beta_dict = self.get_co_cell_betas()
 
         # do_simulation
         for n in range(n_propagation):
@@ -82,14 +104,16 @@ class CellOracle:
 
         gem_simulated = gene_mtx + delta_simulated
         self.adata.layers['perturbed_co'] = gem_simulated        
-        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
+        self.adata.layers['delta_X_co'] = gem_simulated - self.adata.layers["imputed_count"]
 
     def estimate_transition_prob(self,
                                  n_neighbors: int=None,
                                  knn_random: bool=True, sampled_fraction: float=0.3,
                                  sampling_probs: Tuple[float, float]=(0.5, 0.1),
                                  n_jobs: int=4, threads: int=None, calculate_randomized: bool=True,
-                                 random_seed: int=15071990, cell_idx_use=None) -> None:
+                                 random_seed: int=15071990, cell_idx_use=None,
+                                 embedding_name='X_umap',
+                                 test_co=False) -> None:
         """Use correlation to estimate transition probabilities for every cells to its embedding neighborhood
 
         Arguments
@@ -123,11 +147,14 @@ class CellOracle:
         Returns
         -------
         """
-
+        self.embedding_name = embedding_name
         # numba_random_seed(random_seed)
 
         X = _adata_to_matrix(self.adata, "imputed_count")  # [:, :ndims]
-        delta_X = _adata_to_matrix(self.adata, "delta_X")
+        if test_co == True:
+            delta_X = _adata_to_matrix(self.adata, 'delta_X_co')
+        else:
+            delta_X = _adata_to_matrix(self.adata, "delta_X")
         embedding = self.adata.obsm[self.embedding_name]
         self.embedding = embedding
 
