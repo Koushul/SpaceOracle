@@ -197,10 +197,14 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
-    regularize=True, layer='imputed_count'):
+    regularize=True, layer='imputed_count', co_grn=None):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        if co_grn == None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = co_grn
+        
         self.save_dir = save_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
@@ -259,7 +263,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
             estimator = PixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
+                self.adata, target_gene=gene, layer=self.layer, co_grn=self.grn, annot=self.annot)
 
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -327,7 +331,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-        estimator_dict['model'] = torch.compile(estimator_dict['model'])
+       # estimator_dict['model'] = torch.compile(estimator_dict['model'])
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
@@ -341,9 +345,12 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         )
 
 
-    def _get_spatial_betas_dict(self):
+    def _get_spatial_betas_dict(self, genes=None):
         beta_dict = {}
-        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
+        if genes == None:
+            genes = self.queue.completed_genes
+
+        for gene in tqdm(genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
@@ -461,7 +468,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
 
     def compute_betas(self):
-        self.beta_dict = self._get_spatial_betas_dict()
+        self.beta_dict = self._get_spatial_betas_dict(genes=genes)
         self.coef_matrix = self._get_co_betas()
 
 
