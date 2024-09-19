@@ -149,7 +149,9 @@ class NicheAttentionNetwork(nn.Module):
 
         self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
-        self.output_activation = nn.SiLU()
+        # self.output_activation = nn.SiLU()
+        self.output_activation = nn.Tanh()
+
 
     def forward(self, spatial_maps, cluster_info):
         # spatial_maps = torch.sigmoid(spatial_maps)
@@ -161,6 +163,6 @@ class NicheAttentionNetwork(nn.Module):
 
         betas = self.mlp(out)
         betas = self.output_activation(betas)
-        betas = betas.clip(max=3)
+        # betas = betas.clip(max=3)
 
         return betas

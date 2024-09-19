@@ -91,16 +91,17 @@ class ProbabilisticPixelAttention(VisionEstimator):
         
         return best_model, losses
     
-    def predict_y(self, model, betas, batch_labels, inputs_x):
+    def predict_y(self, model, betas, batch_labels, inputs_x, anchors=None):
 
         assert inputs_x.shape[1] == len(self.regulators) == model.dim-1
         assert betas.shape[1] == len(self.regulators)+1
 
-        anchors = np.stack(
-            [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
-            axis=0
-        )
-
+        if anchors is None:
+            anchors = np.stack(
+                [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
+                axis=0
+            )
+        
         anchors = torch.from_numpy(anchors).float().to(device)
 
         y_pred = anchors[:, 0]*betas[:, 0]
@@ -109,6 +110,35 @@ class ProbabilisticPixelAttention(VisionEstimator):
             y_pred += anchors[:, w+1]*betas[:, w+1]*inputs_x[:, w]
 
         return y_pred
+    
+    
+    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False):
+        model.train()
+        total_loss = 0
+
+        for batch_spatial, batch_x, batch_y, batch_labels in dataloader:
+            
+            optimizer.zero_grad()
+            betas = model(batch_spatial.to(device), batch_labels.to(device))
+
+            if cluster_grn:
+                betas = self._mask_betas(betas, batch_labels)
+
+            anchors = np.stack(
+                [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
+                axis=0
+            )
+            
+            outputs = self.predict_y(model, betas, batch_labels, inputs_x=batch_x.to(device), anchors=anchors)
+
+            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+            loss += 1e-3*((betas.mean(0) - torch.from_numpy(anchors).float().mean(0).to(device))**2).sum()
+            
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+                    
+        return total_loss / len(dataloader)
     
 
     # To test if values are significant in a Bayesian model, we can use the posterior distributions of the parameters.

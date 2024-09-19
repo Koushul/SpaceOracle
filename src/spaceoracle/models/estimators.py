@@ -200,7 +200,7 @@ class VisionEstimator(Estimator):
             if cluster_grn:
                 betas = self._mask_betas(betas, batch_labels)
             
-            outputs = self.predict_y(model, betas, batch_labels, inputs_x=batch_x.to(device))
+            outputs = self.predict_y(model, betas, batch_labels, inputs_x=batch_x.to(device), anchors=None)
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             total_loss += loss.item()
         

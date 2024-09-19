@@ -9,8 +9,7 @@ import scanpy as sc
 from torch.utils.data import DataLoader
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from spaceoracle import SpaceOracle
-from spaceoracle.models.estimators import ViTEstimatorV2, GeoCNNEstimatorV2
+from spaceoracle.models.estimators import ViTEstimatorV2
 from spaceoracle.models.vit_blocks import ViT
 
 @pytest.fixture
