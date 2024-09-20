@@ -235,7 +235,7 @@ class ProbabilisticPixelAttention(VisionEstimator):
 
         return (
             self.model, 
-            self.beta_model.linear_model, 
+            self.beta_model, 
             self.beta_dists, 
             self.is_real, 
             self.regulators, 
