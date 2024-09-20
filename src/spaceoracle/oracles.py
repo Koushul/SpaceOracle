@@ -20,6 +20,8 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
@@ -251,7 +253,10 @@ class SpaceOracle(Oracle):
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            estimator = PixelAttention(
+            # estimator = PixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
+
+            estimator = ProbabilisticPixelAttention(
                 self.adata, target_gene=gene, layer=self.layer)
 
             if len(estimator.regulators) == 0:

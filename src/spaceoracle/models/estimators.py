@@ -331,25 +331,33 @@ class VisionEstimator(Estimator):
         
         infer_dataloader = DataLoader(dataset, shuffle=False, **params)
 
-        if self.cluster_grn:
-            beta_stack = []
+        beta_list = []
             
-            for batch_spatial, batch_labels in infer_dataloader:
-                betas = self.model(batch_spatial.to(device), batch_labels.to(device))
-                betas = self._mask_betas(betas, batch_labels)
-                beta_stack.append(betas)
+        for batch_spatial, batch_labels in infer_dataloader:
+            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            beta_list.extend(betas.cpu().numpy())
         
-            beta_stack = torch.cat(beta_stack)
-            return beta_stack.cpu().numpy()
+        return np.array(beta_list)
 
-        else:
-            beta_list = []
+        # if self.cluster_grn:
+        #     beta_stack = []
             
-            for batch_spatial, batch_labels in infer_dataloader:
-                betas = self.model(batch_spatial.to(device), batch_labels.to(device))
-                beta_list.extend(betas.cpu().numpy())
+        #     for batch_spatial, batch_labels in infer_dataloader:
+        #         betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+        #         betas = self._mask_betas(betas, batch_labels)
+        #         beta_stack.append(betas)
+        
+        #     beta_stack = torch.cat(beta_stack)
+        #     return beta_stack.cpu().numpy()
+
+        # else:
+        #     beta_list = []
             
-            return np.array(beta_list)
+        #     for batch_spatial, batch_labels in infer_dataloader:
+        #         betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+        #         beta_list.extend(betas.cpu().numpy())
+            
+        #     return np.array(beta_list)
 
 # class GeoCNNEstimatorV2(VisionEstimator):
 #     def _build_cnn(

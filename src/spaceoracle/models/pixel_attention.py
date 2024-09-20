@@ -12,6 +12,7 @@ import torch
 import functools
 from torch.nn.utils.parametrizations import weight_norm
 from torch.distributions import Normal, Gamma
+pyro.clear_param_store()
 
 device = torch.device(
     "mps" if torch.backends.mps.is_available() 

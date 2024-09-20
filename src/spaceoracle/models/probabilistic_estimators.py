@@ -11,6 +11,7 @@ import enlighten
 import pyro
 from pyro.infer.autoguide import AutoDiagonalNormal
 from pyro.infer import SVI, Trace_ELBO
+pyro.clear_param_store()
 
 
 class ProbabilisticPixelAttention(VisionEstimator):
@@ -26,7 +27,6 @@ class ProbabilisticPixelAttention(VisionEstimator):
         batch_size,
         learning_rate,
         rotate_maps,
-        cluster_grn,
         pbar=None
         ):
 
@@ -67,15 +67,11 @@ class ProbabilisticPixelAttention(VisionEstimator):
             )
             pbar.refresh()
 
-
-            
         for epoch in range(max_epochs):
             training_loss = self._training_loop(
-                model, train_dataloader, criterion, optimizer, 
-                cluster_grn=cluster_grn)
+                model, train_dataloader, criterion, optimizer)
             validation_loss = self._validation_loop(
-                model, valid_dataloader, criterion, 
-                cluster_grn=cluster_grn)
+                model, valid_dataloader, criterion)
             
             losses.append(validation_loss)
 
@@ -112,7 +108,7 @@ class ProbabilisticPixelAttention(VisionEstimator):
         return y_pred
     
     
-    def _training_loop(self, model, dataloader, criterion, optimizer, cluster_grn=False):
+    def _training_loop(self, model, dataloader, criterion, optimizer):
         model.train()
         total_loss = 0
 
@@ -120,9 +116,6 @@ class ProbabilisticPixelAttention(VisionEstimator):
             
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
-
-            if cluster_grn:
-                betas = self._mask_betas(betas, batch_labels)
 
             anchors = np.stack(
                 [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
@@ -163,10 +156,10 @@ class ProbabilisticPixelAttention(VisionEstimator):
         learning_rate=2e-4, 
         spatial_dim=64,
         batch_size=32, 
+        alpha=0.05,
         num_samples=1000,
         mode='train_test',
         rotate_maps=True,
-        cluster_grn=True,
         pbar=None
         ):
         
@@ -175,7 +168,6 @@ class ProbabilisticPixelAttention(VisionEstimator):
         self.spatial_dim = spatial_dim  
         self.rotate_maps = rotate_maps
         self.annot = annot
-        self.cluster_grn = cluster_grn
 
         adata = self.adata
             
@@ -202,7 +194,7 @@ class ProbabilisticPixelAttention(VisionEstimator):
             )
 
         self.is_real = pd.DataFrame(
-            [self.test_significance(self.beta_dists[i][:, 1:]) for i in self.beta_dists.keys()], 
+            [self.test_significance(self.beta_dists[i][:, 1:], alpha=alpha) for i in self.beta_dists.keys()], 
             columns=self.regulators
         ).T
 
@@ -221,7 +213,6 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 layer=self.layer,
-                cluster_grn=cluster_grn,
                 max_epochs=max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,

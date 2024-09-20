@@ -193,7 +193,7 @@ class BayesianRegression(BaseEstimator):
 
 
     def get_betas(self, X, cluster, num_samples=1000):
-
+        pyro.clear_param_store()
         model = self.models_dict[cluster]
         guide = self.guides[cluster]
 
