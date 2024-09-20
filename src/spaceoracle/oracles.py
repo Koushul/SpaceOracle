@@ -20,6 +20,7 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
+from spaceoracle.models.base_estimators import BayesianRegression
 from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.network import DayThreeRegulatoryNetwork
@@ -284,11 +285,20 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
-                model, regulators, target_gene = estimator.export()
+                (model, beta_model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
                 with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump({'model': model.state_dict(), 'regulators': regulators}, f)
+                    pickle.dump(
+                        {
+                            'model': model.state_dict(), 
+                            'regulators': regulators,
+                            'beta_model': beta_model.state_dict(),
+                            'beta_dists': beta_dists,
+                            'is_real': is_real,
+                        }, 
+                        f
+                    )
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
                     del model
@@ -304,12 +314,21 @@ class SpaceOracle(Oracle):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
             loaded_dict =  CPU_Unpickler(f).load()
 
-            model = NicheAttentionNetwork(
+            model = ProbabilisticPixelAttention(
                 np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
             model.load_state_dict(loaded_dict['model'])
-            
+
+                    
+            beta_model = BayesianRegression(
+                n_regulators=len(loaded_dict['regulators']), 
+                device=torch.device('cpu')
+            )
+
+            beta_model.load_state_dict(loaded_dict['beta_model'])
+
             loaded_dict['model'] = model
-        
+            loaded_dict['beta_model'] = beta_model
+
         return loaded_dict
     
     

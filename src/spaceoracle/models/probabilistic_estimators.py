@@ -231,4 +231,13 @@ class ProbabilisticPixelAttention(VisionEstimator):
 
     def export(self):
         self.model.eval()
-        return self.model, self.regulators, self.target_gene
+        self.beta_model.eval()
+
+        return (
+            self.model, 
+            self.beta_model, 
+            self.beta_dists, 
+            self.is_real, 
+            self.regulators, 
+            self.target_gene
+        )
