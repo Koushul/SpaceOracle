@@ -293,7 +293,7 @@ class SpaceOracle(Oracle):
                         {
                             'model': model.state_dict(), 
                             'regulators': regulators,
-                            'beta_model': beta_model.state_dict(),
+                            'beta_model.linear_model': beta_model.linear_model.state_dict(),
                             'beta_dists': beta_dists,
                             'is_real': is_real,
                         }, 
@@ -324,7 +324,7 @@ class SpaceOracle(Oracle):
                 device=torch.device('cpu')
             )
 
-            beta_model.load_state_dict(loaded_dict['beta_model'])
+            beta_model.linear_model.load_state_dict(loaded_dict['beta_model.linear_model'])
 
             loaded_dict['model'] = model
             loaded_dict['beta_model'] = beta_model
