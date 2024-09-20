@@ -1,3 +1,5 @@
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 from abc import ABC, abstractmethod
 import numpy as np
 from sklearn.metrics import r2_score
