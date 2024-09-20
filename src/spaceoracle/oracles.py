@@ -190,9 +190,9 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
-    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
-    regularize=True, layer='imputed_count'):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
+    layer='imputed_count', alpha=0.05):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -201,17 +201,16 @@ class SpaceOracle(Oracle):
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
-        self.init_betas = init_betas
         self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.rotate_maps = rotate_maps
-        self.cluster_grn = cluster_grn
-        self.regularize = regularize
+        self.layer = layer
+        self.alpha = alpha
+
         self.beta_dict = None
         self.coef_matrix = None
-        self.layer = layer
 
         if 'spatial_maps' not in self.adata.obsm:
             self.imbue_adata_with_space(
@@ -279,11 +278,9 @@ class SpaceOracle(Oracle):
                     learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
                     batch_size=self.batch_size,
-                    init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
-                    cluster_grn=self.cluster_grn,
-                    regularize=self.regularize,
+                    alpha=self.alpha,
                     pbar=train_bar
                 )
 
