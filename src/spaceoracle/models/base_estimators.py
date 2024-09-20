@@ -1,5 +1,5 @@
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=Warning)
 from abc import ABC, abstractmethod
 import numpy as np
 from sklearn.metrics import r2_score
@@ -20,9 +20,6 @@ from sklearn.model_selection import train_test_split
 import copy
 from joblib import Parallel, delayed
 
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 set_seed(42)
 
 device = torch.device(

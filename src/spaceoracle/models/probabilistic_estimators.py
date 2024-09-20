@@ -1,5 +1,5 @@
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=Warning)
 import pandas as pd
 from spaceoracle.models.base_estimators import BayesianRegression, device
 from spaceoracle.models.estimators import VisionEstimator
