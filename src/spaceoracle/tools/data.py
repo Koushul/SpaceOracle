@@ -84,28 +84,16 @@ class SpaceOracleDataset(SpatialDataset):
         # self.clusters = upsampled_clusters
         # self.xy = upsampled_xy
 
-        # if 'spatial_maps' in self.adata.obsm:
-        #     self.spatial_maps = self.adata.obsm['spatial_maps']
-        # else:
-        #     self.spatial_maps = xyc2spatial(    
-        #         self.xy[:, 0], 
-        #         self.xy[:, 1], 
-        #         self.clusters,
-        #         self.spatial_dim, 
-        #         self.spatial_dim,
-        #         disable_tqdm=False
-        #     )
+        if 'spatial_maps' in self.adata.obsm:
+            self.spatial_maps = self.adata.obsm['spatial_maps']
+        else:
+            self.spatial_maps = xyc2spatial_fast(
+                xyc = np.column_stack([self.xy, self.clusters]),
+                m=self.spatial_dim,
+                n=self.spatial_dim,
+            ).astype(np.float32)
             
-        #     self.adata.obsm['spatial_maps'] = self.spatial_maps
-
-
-        self.spatial_maps = xyc2spatial_fast(
-            xyc = np.column_stack([self.xy, self.clusters]),
-            m=self.spatial_dim,
-            n=self.spatial_dim,
-        ).astype(np.float32)
-        
-        self.adata.obsm['spatial_maps'] = self.spatial_maps
+            self.adata.obsm['spatial_maps'] = self.spatial_maps
 
     def __getitem__(self, index):
         sp_map = self.spatial_maps[index]
