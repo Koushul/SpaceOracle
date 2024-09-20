@@ -316,8 +316,11 @@ class SpaceOracle(Oracle):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
             loaded_dict =  CPU_Unpickler(f).load()
 
-            model = ProbabilisticPixelAttention(
-                np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
+            model = NicheAttentionNetwork(
+                len(loaded_dict['regulators']), 
+                nclusters, 
+                spatial_dim
+            )
             model.load_state_dict(loaded_dict['model'])
 
             loaded_dict['model'] = model
