@@ -130,6 +130,6 @@ def test_vit_with_real_data():
     # SpaceOracle.knn_imputation(adata_test, pcs)
 
     estimator = ViTEstimatorV2(adata_train, target_gene='Cd74', layer='normalized_count')
-    assert len(estimator.regulators) == 15
+    assert len(estimator.regulators) == 17
 
-    assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 15
+    assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 17

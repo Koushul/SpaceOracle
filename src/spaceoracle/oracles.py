@@ -23,7 +23,6 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.base_estimators import BayesianRegression
 from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.network import DayThreeRegulatoryNetwork
@@ -168,7 +167,7 @@ class OracleQueue:
         completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
-        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
+        locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
         return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
 
     def create_lock(self, gene):
@@ -187,6 +186,11 @@ class OracleQueue:
     @staticmethod
     def extract_gene_name(path):
         match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        return match.group(1) if match else None
+    
+    @staticmethod
+    def extract_gene_name_from_lock(path):
+        match = re.search(r'([^/]+)\.lock$', path)
         return match.group(1) if match else None
 
 
@@ -251,6 +255,7 @@ class SpaceOracle(Oracle):
             autorefresh=True,
         )
 
+
         while not self.queue.is_empty:
             gene = next(self.queue)
 
@@ -261,7 +266,7 @@ class SpaceOracle(Oracle):
 
             estimator = ProbabilisticPixelAttention(
                 self.adata, target_gene=gene, layer=self.layer)
-
+            
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
                 continue
@@ -337,13 +342,18 @@ class SpaceOracle(Oracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-        estimator_dict['model'] = torch.compile(estimator_dict['model'])
+        beta_dists = estimator_dict.get('beta_dists', None)
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
+        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
+
+        if beta_dists:
+            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
+            betas = betas * anchors
 
         return BetaOutput(
-            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
+            betas=betas,
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],

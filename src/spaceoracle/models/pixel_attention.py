@@ -150,7 +150,6 @@ class NicheAttentionNetwork(nn.Module):
 
         self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
-        # self.output_activation = nn.SiLU()
         self.output_activation = nn.Tanh()
 
 
@@ -164,6 +163,5 @@ class NicheAttentionNetwork(nn.Module):
 
         betas = self.mlp(out)
         betas = self.output_activation(betas)
-        # betas = betas.clip(max=3)
 
         return betas

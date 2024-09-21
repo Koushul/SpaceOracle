@@ -36,7 +36,7 @@ else:
 norm = Normalize(0, 1)
 
 
-class Estimator(ABC):
+class AbstractEstimator(ABC):
     
     def __init__(self):
         pass
@@ -48,8 +48,19 @@ class Estimator(ABC):
     @abstractmethod
     def get_betas(self):
         pass
+
+    def predict_y(self):
+        raise NotImplementedError
     
-class LeastSquaredEstimator(Estimator):
+    def _training_loop(self):
+        raise NotImplementedError
+    
+    def _validation_loop(self):
+        raise NotImplementedError
+    
+
+    
+class LeastSquaredEstimator(AbstractEstimator):
     
     def fit(self, X, y):
         ols_model = OLS(y=y, x=X)
@@ -74,52 +85,51 @@ class ClusterLeastSquaredEstimator(LeastSquaredEstimator):
     def get_betas(self, cluster_label):
         return self.beta_dict[self.betas]
 
-# class BetaModel(nn.Module):
-#     @deprecated('Please use ViT instead.')
-#     def __init__(self, betas, in_channels=1, init=0.1):
-#         set_seed(42)
-#         super(BetaModel, self).__init__()
-#         self.dim = betas.shape[0]
-#         self.betas = torch.tensor(betas.astype(np.float32)).to(device)
+
+class SimpleCNN(nn.Module):
+    @deprecated('Please use ViT instead.')
+    def __init__(self, betas, in_channels=1, init=0.1):
+        set_seed(42)
+        super().__init__()
+        self.dim = betas.shape[0]
+        self.betas = torch.tensor(betas.astype(np.float32)).to(device)
         
-#         self.conv_layers = nn.Sequential(
-#             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
-#             nn.PReLU(init=init),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
+        self.conv_layers = nn.Sequential(
+            weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
+            nn.PReLU(init=init),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             
-#             weight_norm(nn.Conv2d(32, 64, kernel_size=3, padding='same')),
-#             nn.PReLU(init=init),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
+            weight_norm(nn.Conv2d(32, 64, kernel_size=3, padding='same')),
+            nn.PReLU(init=init),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             
-#             weight_norm(nn.Conv2d(64, 256, kernel_size=3, padding='same')),
-#             nn.PReLU(init=init),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
+            weight_norm(nn.Conv2d(64, 256, kernel_size=3, padding='same')),
+            nn.PReLU(init=init),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             
-#             nn.AdaptiveAvgPool2d(1),
-#             nn.Flatten()
-#         )
-#         self.fc_layers = nn.Sequential(
-#             nn.Linear(256, 128),
-#             nn.PReLU(init=init),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten()
+        )
+        self.fc_layers = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.PReLU(init=init),
             
-#             nn.Linear(128, 64),
-#             nn.PReLU(init=init),
+            nn.Linear(128, 64),
+            nn.PReLU(init=init),
             
-#             nn.Linear(64, 16),
-#             nn.PReLU(init=init),
-#             nn.Dropout(0.2),
-#             nn.Linear(16, self.dim)
-#         )
+            nn.Linear(64, 16),
+            nn.PReLU(init=init),
+            nn.Dropout(0.2),
+            nn.Linear(16, self.dim)
+        )
+
+    def forward(self, spatial_map, input_labels):
+        spatial_features = self.conv_layers(spatial_map)
+        betas = self.fc_layers(spatial_features)
+        return betas
 
 
-#     def forward(self, spatial_map, input_labels):
-#         spatial_features = self.conv_layers(spatial_map)
-#         betas = self.fc_layers(spatial_features)
-
-#         return betas
-
-
-class VisionEstimator(Estimator):
+class VisionEstimator(AbstractEstimator):
     def __init__(self, adata, target_gene, regulators=None, n_clusters=None, layer='imputed_count'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
@@ -148,14 +158,11 @@ class VisionEstimator(Estimator):
         assert inputs_x.shape[1] == len(self.regulators) == model.dim-1
         assert betas.shape[1] == len(self.regulators)+1 == len(model.betas) == len(self.regulators)+1, f'{betas.shape} {model.betas.shape}'
 
-        print('betas', betas.shape)
-        print('inputs_x', inputs_x.shape)
         y_pred = betas[:, 0]
          
         for w in range(model.dim-1):
             y_pred += betas[:, w+1]*inputs_x[:, w]
 
-        print('y_pred', y_pred.shape)
         return y_pred
 
     
@@ -260,21 +267,9 @@ class VisionEstimator(Estimator):
             rotate_maps=rotate_maps
         )
 
-        # dataset = SpaceOracleDatasetv2(
-        #     adata.copy(), 
-        #     target_gene=target_gene, 
-        #     regulators=regulators, 
-        #     annot=annot, 
-        #     layer=layer,
-        #     spatial_dim=spatial_dim,
-        #     rotate_maps=rotate_maps
-        # )
-        
-
         if mode == 'train':
             train_dataloader = DataLoader(dataset, shuffle=True, **params)
             valid_dataloader = DataLoader(dataset, shuffle=False, **params)
-            
             return train_dataloader, valid_dataloader
         
         if mode == 'train_test':
@@ -465,7 +460,7 @@ class VisionEstimator(Estimator):
         
         
 
-class SpatialInsights(VisionEstimator):
+class ViTEstimatorV2(VisionEstimator):
     def _build_model(
         self,
         adata,
@@ -524,8 +519,10 @@ class SpatialInsights(VisionEstimator):
             pbar.refresh()
             
         for epoch in range(max_epochs):
-            training_loss = self._training_loop(model, train_dataloader, criterion, optimizer, cluster_grn=cluster_grn, regularize=regularize)
-            validation_loss = self._validation_loop(model, valid_dataloader, criterion, cluster_grn=cluster_grn)
+            training_loss = self._training_loop(model, train_dataloader, criterion, 
+                                optimizer, cluster_grn=cluster_grn, regularize=regularize)
+            validation_loss = self._validation_loop(model, valid_dataloader, 
+                                criterion, cluster_grn=cluster_grn)
             
             losses.append(validation_loss)
 
@@ -534,16 +531,10 @@ class SpatialInsights(VisionEstimator):
                 best_model = copy.deepcopy(model)
                 best_iter = epoch
             
-            # pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | Baseline: {baseline_loss:.4f}'
-            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | alpha: {model.alpha.item():.4f}'
-            # pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f} (*{best_iter}*) | alpha: {model.alpha:.4f}'
-
-
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4f}'
             pbar.update()
             
         best_model.eval()
-        
-        # print(f'Best model at {best_iter}/{max_epochs}')
         
         return best_model, losses
 
@@ -587,7 +578,8 @@ class SpatialInsights(VisionEstimator):
             beta_init = ols.get_betas()
 
         elif init_betas == 'co':
-            co_coefs = self.grn.get_regulators_with_pvalues(adata, self.target_gene).groupby('source').mean()
+            co_coefs = self.grn.get_regulators_with_pvalues(
+                adata, self.target_gene).groupby('source').mean()
             co_coefs = co_coefs.loc[self.regulators]
             beta_init = np.array(co_coefs.values).reshape(-1, )
             beta_init = np.concatenate([[1], beta_init], axis=0) 
@@ -628,10 +620,6 @@ class SpatialInsights(VisionEstimator):
         self.model.eval()
         # self.model.cpu()
         return self.model, self.regulators, self.target_gene
-
-
-## backward compatibility
-ViTEstimatorV2 = SpatialInsights
 
 
 class PixelAttention(VisionEstimator):
@@ -703,7 +691,7 @@ class PixelAttention(VisionEstimator):
                 best_model = copy.deepcopy(model)
                 best_iter = epoch
             
-            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4g} | Baseline: {baseline_loss:.4g}'
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4g}'
             pbar.update()
             
         best_model.eval()
