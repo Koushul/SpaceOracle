@@ -89,6 +89,8 @@ def xyc2spatial_fast(xyc, m, n):
     
     spatial_maps = np.zeros((len(xyc), num_clusters, m, n), dtype=np.float32)
     mask = np.zeros((num_clusters, m, n), dtype=np.float32)
+    # mask = np.ones((num_clusters, m, n), dtype=np.float32) * np.inf
+
     
     for s in prange(len(xyc)):
         x_, y_, cluster = xyc[s]
@@ -100,7 +102,6 @@ def xyc2spatial_fast(xyc, m, n):
         
         for i in range(num_clusters):
             spatial_maps[s, i] = dist_map
-    
     max_val = np.max(spatial_maps)
     channel_wise_maps = np.zeros_like(spatial_maps)
     
@@ -110,4 +111,5 @@ def xyc2spatial_fast(xyc, m, n):
                 for k in range(n):
                     channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
 
+    # channel_wise_maps = 1.0/channel_wise_maps
     return channel_wise_maps

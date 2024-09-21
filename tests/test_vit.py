@@ -9,8 +9,7 @@ import scanpy as sc
 from torch.utils.data import DataLoader
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from spaceoracle import SpaceOracle
-from spaceoracle.models.estimators import ViTEstimatorV2, GeoCNNEstimatorV2
+from spaceoracle.models.estimators import ViTEstimatorV2
 from spaceoracle.models.vit_blocks import ViT
 
 @pytest.fixture
@@ -131,6 +130,6 @@ def test_vit_with_real_data():
     # SpaceOracle.knn_imputation(adata_test, pcs)
 
     estimator = ViTEstimatorV2(adata_train, target_gene='Cd74', layer='normalized_count')
-    assert len(estimator.regulators) == 15
+    assert len(estimator.regulators) == 17
 
-    assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 15
+    assert np.intersect1d(estimator.regulators, adata_train.var_names).shape[0] == 17

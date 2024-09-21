@@ -1,3 +1,6 @@
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 from abc import ABC, abstractmethod
 import numpy as np
 import sys
@@ -19,6 +22,8 @@ import io
 from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
+
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -162,7 +167,7 @@ class OracleQueue:
         completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
-        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
+        locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
         return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
 
     def create_lock(self, gene):
@@ -182,15 +187,20 @@ class OracleQueue:
     def extract_gene_name(path):
         match = re.search(r'([^/]+)_estimator\.pkl$', path)
         return match.group(1) if match else None
+    
+    @staticmethod
+    def extract_gene_name_from_lock(path):
+        match = re.search(r'([^/]+)\.lock$', path)
+        return match.group(1) if match else None
 
 
 
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
-    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
-    regularize=True, layer='imputed_count'):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
+    layer='imputed_count', alpha=0.05):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -199,17 +209,16 @@ class SpaceOracle(Oracle):
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
-        self.init_betas = init_betas
         self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.rotate_maps = rotate_maps
-        self.cluster_grn = cluster_grn
-        self.regularize = regularize
+        self.layer = layer
+        self.alpha = alpha
+
         self.beta_dict = None
         self.coef_matrix = None
-        self.layer = layer
 
         if 'spatial_maps' not in self.adata.obsm:
             self.imbue_adata_with_space(
@@ -246,14 +255,18 @@ class SpaceOracle(Oracle):
             autorefresh=True,
         )
 
+
         while not self.queue.is_empty:
             gene = next(self.queue)
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            estimator = PixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
+            # estimator = PixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
 
+            estimator = ProbabilisticPixelAttention(
+                self.adata, target_gene=gene, layer=self.layer)
+            
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
                 continue
@@ -274,19 +287,25 @@ class SpaceOracle(Oracle):
                     learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
                     batch_size=self.batch_size,
-                    init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
-                    cluster_grn=self.cluster_grn,
-                    regularize=self.regularize,
+                    alpha=self.alpha,
                     pbar=train_bar
                 )
 
-                model, regulators, target_gene = estimator.export()
+                (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
                 with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump({'model': model.state_dict(), 'regulators': regulators}, f)
+                    pickle.dump(
+                        {
+                            'model': model.state_dict(), 
+                            'regulators': regulators,
+                            'beta_dists': beta_dists,
+                            'is_real': is_real,
+                        }, 
+                        f
+                    )
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
                     del model
@@ -303,11 +322,14 @@ class SpaceOracle(Oracle):
             loaded_dict =  CPU_Unpickler(f).load()
 
             model = NicheAttentionNetwork(
-                np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
+                len(loaded_dict['regulators']), 
+                nclusters, 
+                spatial_dim
+            )
             model.load_state_dict(loaded_dict['model'])
-            
+
             loaded_dict['model'] = model
-        
+
         return loaded_dict
     
     
@@ -320,13 +342,18 @@ class SpaceOracle(Oracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-        estimator_dict['model'] = torch.compile(estimator_dict['model'])
+        beta_dists = estimator_dict.get('beta_dists', None)
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
+        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
+
+        if beta_dists:
+            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
+            betas = betas * anchors
 
         return BetaOutput(
-            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
+            betas=betas,
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],

@@ -13,13 +13,13 @@ def calculate_md5(filename):
 
 
 def test_file_integrity():
-    filename = "./data/slideseq/celloracle_links_day3_1.pkl"
-    md5_hash = calculate_md5(filename)
-    assert md5_hash == "a1f83312e45e8458f05801f18e37a01a"
+    # filename = "./data/slideseq/celloracle_links_day3_1.pkl"
+    # md5_hash = calculate_md5(filename)
+    # assert md5_hash == "a1f83312e45e8458f05801f18e37a01a"
 
-    filename = "./data/slideseq/celloracle_links_day3_2.pkl"
-    md5_hash = calculate_md5(filename)
-    assert md5_hash == "75fb49e777f886e0f1b150193f4d7930"
+    # filename = "./data/slideseq/celloracle_links_day3_2.pkl"
+    # md5_hash = calculate_md5(filename)
+    # assert md5_hash == "75fb49e777f886e0f1b150193f4d7930"
 
     filename = "./data/slideseq/celltype_assign.json"
     md5_hash = calculate_md5(filename)

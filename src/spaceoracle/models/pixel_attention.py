@@ -1,3 +1,8 @@
+import pyro
+from pyro.infer import Predictive
+from pyro.infer.autoguide import AutoDiagonalNormal
+from pyro.nn import PyroModule
+from pysal.model.spreg import OLS
 import torch.nn.functional as F
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
@@ -6,6 +11,15 @@ import torch.nn as nn
 import torch    
 import functools
 from torch.nn.utils.parametrizations import weight_norm
+from torch.distributions import Normal, Gamma
+pyro.clear_param_store()
+
+device = torch.device(
+    "mps" if torch.backends.mps.is_available() 
+    else "cuda" if torch.cuda.is_available() 
+    else "cpu"
+)
+
 
 class _cluster_routing(nn.Module):
 
@@ -72,11 +86,14 @@ class ConditionalConv2D(_ConvNd):
         res = []
         
         assert inputs.shape[0] == input_labels.shape[0]
-
         pooled_inputs = self._avg_pooling(inputs)
         routing_weights = self._routing_fn(pooled_inputs, input_labels)
-        kernels = torch.sum(routing_weights[:, :, None, None, None, None] * self.weight, 1)
         
+        # Get the index of the highest weight for each input
+        max_weight_indices = torch.argmax(routing_weights, dim=1)
+        
+        # Select the kernel with the highest weight for each input
+        kernels = self.weight[max_weight_indices]
         for inputx, kernel in zip(inputs, kernels):
             out = self._conv_forward(inputx.unsqueeze(0), kernel)
             res.append(out)
@@ -96,25 +113,13 @@ class ConditionalConv2D(_ConvNd):
 
 
 class NicheAttentionNetwork(nn.Module):
-    """
-    NicheAttentionNetwork uses a custom conditional convolutional layer \
-        to generate channel-wise cell type specific attention maps.
-
-    Estimated βetas are thus a function of x, y coordinates and cell type.
-        
-    Attention maps are generate using:
-        `att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))`
-
-    """
-    
-    def __init__(self, betas, in_channels, spatial_dim):
+     
+    def __init__(self, n_regulators, in_channels, spatial_dim):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = in_channels
         self.spatial_dim = spatial_dim
-        self.betas = betas
-        self.dim = betas.shape[0]
-
+        self.dim = n_regulators+1
         self.conditional_conv = ConditionalConv2D(self.in_channels, self.in_channels, 1)
         self.sigmoid = nn.Sigmoid()
 
@@ -127,7 +132,7 @@ class NicheAttentionNetwork(nn.Module):
             nn.PReLU(init=0.1),
             nn.MaxPool2d(kernel_size=2, stride=2),
 
-            weight_norm(nn.Conv2d(64, 256, kernel_size=3, padding='same')),
+            weight_norm(nn.Conv2d(64, 128, kernel_size=3, padding='same')),
             nn.PReLU(init=0.1),
             nn.MaxPool2d(kernel_size=2, stride=2),
             
@@ -135,27 +140,28 @@ class NicheAttentionNetwork(nn.Module):
             nn.Flatten()
         )
 
-        self.cluster_emb = nn.Embedding(self.in_channels, 256)
+        self.cluster_emb = nn.Embedding(self.in_channels, 128)
 
         self.mlp = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.PReLU(init=0.1),
             nn.Linear(128, 64),
             nn.PReLU(init=0.1),
-            nn.Linear(64, 32),
-            nn.PReLU(init=0.1),
-            nn.Dropout(0.2),
-            nn.Linear(32, self.dim)
+            nn.Linear(64, self.dim)
         )
 
         self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
+        self.output_activation = nn.Tanh()
+
+
     def forward(self, spatial_maps, cluster_info):
+        # spatial_maps = torch.sigmoid(spatial_maps)
         att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
         out = att * spatial_maps
         out = self.conv_layers(out)
         emb = self.cluster_emb(cluster_info) * self.alpha
         out = out + emb 
+
         betas = self.mlp(out)
+        betas = self.output_activation(betas)
 
         return betas
