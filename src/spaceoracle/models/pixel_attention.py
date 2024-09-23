@@ -154,7 +154,6 @@ class NicheAttentionNetwork(nn.Module):
 
 
     def forward(self, spatial_maps, cluster_info):
-        # spatial_maps = torch.sigmoid(spatial_maps)
         att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
         out = att * spatial_maps
         out = self.conv_layers(out)

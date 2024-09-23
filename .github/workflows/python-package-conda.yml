@@ -34,4 +34,4 @@ jobs:
         source ~/.bashrc
         conda activate base
         conda activate base
-        pytest -p no:warnings
+        pytest -vv -p no:warnings

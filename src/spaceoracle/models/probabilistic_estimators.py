@@ -18,6 +18,8 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import copy
 import os
+import pickle
+
 from joblib import Parallel, delayed
 
 from spaceoracle.models.spatial_map import xyc2spatial_fast
@@ -349,6 +351,8 @@ class ProbabilisticPixelAttention(VisionEstimator):
         num_samples=1000,
         mode='train_test',
         rotate_maps=True,
+        parallel=True,
+        cache=False,
         pbar=None
         ):
         
@@ -359,28 +363,38 @@ class ProbabilisticPixelAttention(VisionEstimator):
         self.annot = annot
 
         adata = self.adata
+        beta_dists_file = f"{self.target_gene}_beta_dists.pkl"
+
             
         X = torch.from_numpy(adata.to_df(layer=self.layer)[self.regulators].values).float()
         y = torch.from_numpy(adata.to_df(layer=self.layer)[self.target_gene].values).float()
         cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long()
+        if not cache:
 
-        self.beta_model = BayesianRegression(
-            n_regulators=len(self.regulators), device=torch.device('cpu'))
+            self.beta_model = BayesianRegression(
+                n_regulators=len(self.regulators), device=torch.device('cpu'))
 
-        self.beta_model.fit(
-            X, y, cluster_labels, 
-            max_epochs=3000, learning_rate=3e-3, 
-            num_samples=num_samples
-        )
-
-
-        self.beta_dists = {}
-        for cluster in range(self.n_clusters):
-            self.beta_dists[cluster] = self.beta_model.get_betas(
-                X[cluster_labels==cluster].to(self.beta_model.device), 
-                cluster=cluster, 
-                num_samples=1000
+            self.beta_model.fit(
+                X, y, cluster_labels, 
+                max_epochs=3000, learning_rate=3e-3, 
+                num_samples=num_samples,
+                parallel=parallel
             )
+
+            self.beta_dists = {}
+            for cluster in range(self.n_clusters):
+                self.beta_dists[cluster] = self.beta_model.get_betas(
+                    X[cluster_labels==cluster].to(self.beta_model.device), 
+                    cluster=cluster, 
+                    num_samples=1000
+                )
+        
+            with open(beta_dists_file, 'wb') as f:
+                pickle.dump(self.beta_dists, f)
+
+        else:
+            with open(beta_dists_file, 'rb') as f:
+                self.beta_dists = pickle.load(f)
 
         self.is_real = pd.DataFrame(
             [self.test_significance(self.beta_dists[i][:, 1:], alpha=alpha) for i in self.beta_dists.keys()], 

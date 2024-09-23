@@ -41,10 +41,6 @@ class CellOracleLinks:
     def __init__(self):
         pass
 
-    def get_regulators(self, adata, target_gene):
-        pass
-
-
     def get_regulators(self, adata, target_gene, alpha=0.05):
         regulators_with_pvalues = self.get_regulators_with_pvalues(adata, target_gene, alpha)
         grouped_regulators = regulators_with_pvalues.groupby('source').mean()

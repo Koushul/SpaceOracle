@@ -130,22 +130,25 @@ class SimpleCNN(nn.Module):
 
 
 class VisionEstimator(AbstractEstimator):
-    def __init__(self, adata, target_gene, regulators=None, n_clusters=None, layer='imputed_count'):
+    def __init__(self, adata, target_gene, grn=None, regulators=None, layer='imputed_count'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
 
         self.adata = adata
         self.target_gene = target_gene
-        # self.grn = GeneRegulatoryNetwork()
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        # self.grn = SurveyRegulatoryNetwork()
-
-        if regulators == None and n_clusters == None:
+        if grn is None:
+            # self.grn = GeneRegulatoryNetwork()
+            # self.grn = SurveyRegulatoryNetwork()
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = grn
+        
+        if regulators == None:
             self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
-            self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
         else:
             self.regulators = regulators
-            self.n_clusters = n_clusters
+
+        self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
         
         self.layer = layer
         self.model = None

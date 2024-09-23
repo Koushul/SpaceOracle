@@ -55,12 +55,12 @@ class Oracle(ABC):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
-        self.pcs = self.perform_PCA(self.adata)
-        self.knn_imputation(self.adata, self.pcs)
-        self.gene2index = dict(zip(
-                self.adata.var_names, 
-                range(len(self.adata.var_names))
-            ))
+        self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
+        
+        if 'imputed_count' not in self.adata.layers:
+            self.pcs = self.perform_PCA(self.adata)
+            self.knn_imputation(self.adata, self.pcs)
+
 
     ## canibalized from CellOracle
     @staticmethod
@@ -430,23 +430,31 @@ class SpaceOracle(Oracle):
 
 
     @staticmethod
-    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False):
+    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False, method='fast'):
         clusters = np.array(adata.obs[annot])
         xy = np.array(adata.obsm['spatial'])
 
-        # sp_maps = xyc2spatial(
-        #     xy[:, 0], 
-        #     xy[:, 1], 
-        #     clusters,
-        #     spatial_dim, spatial_dim, 
-        #     disable_tqdm=False
-        # ).astype(np.float32)
+        if method == 'fast':
+            sp_maps = xyc2spatial_fast(
+                xyc = np.column_stack([xy, clusters]),
+                m=spatial_dim,
+                n=spatial_dim,
+            ).astype(np.float32)
 
-        sp_maps = xyc2spatial_fast(
-            xyc = np.column_stack([xy, clusters]),
-            m=spatial_dim,
-            n=spatial_dim,
-        ).astype(np.float32)
+            # min_vals = np.min(sp_maps, axis=(2, 3), keepdims=True)
+            # max_vals = np.max(sp_maps, axis=(2, 3), keepdims=True)
+            # denominator = np.maximum(max_vals - min_vals, 1e-15)
+            # channel_wise_maps_norm = (sp_maps - min_vals) / denominator
+            # sp_maps = channel_wise_maps_norm
+                
+        else:
+            sp_maps = xyc2spatial(
+                xy[:, 0], 
+                xy[:, 1], 
+                clusters,
+                spatial_dim, spatial_dim, 
+                disable_tqdm=False
+            ).astype(np.float32)
 
         if in_place:
             adata.obsm['spatial_maps'] = sp_maps
