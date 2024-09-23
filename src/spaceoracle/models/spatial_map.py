@@ -24,7 +24,7 @@ def distance(point1, point2):
     x2, y2 = point2
     return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-@deprecated('`xyc2spatial` is deprecated. Use `xyc2spatial_fast` instead to save the trees 🌴️')
+# @deprecated('`xyc2spatial` is deprecated. Use `xyc2spatial_fast` instead to save the trees 🌴️')
 def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     
     assert len(x) == len(y) == len(c)
@@ -36,6 +36,10 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     
     spatial_maps = np.zeros((len(x), m, n))
     mask = np.zeros((len(clusters), m, n))
+
+    # mask = np.ones((len(clusters), m, n)) * -1*np.inf
+
+
     with tqdm(total=len(xyc), disable=disable_tqdm, desc=f'🌍️ Generating {m}x{n} spatial maps') as pbar:
         
         for s, coord in enumerate(xyc):
@@ -55,9 +59,39 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     spatial_maps = np.repeat(np.expand_dims(spatial_maps, axis=1), len(clusters), axis=1)
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
 
-    # channel_wise_maps = spatial_maps*mask 
+
+    max_vals = np.max(spatial_maps, axis=(2, 3), keepdims=True)
+    channel_wise_maps = max_vals/spatial_maps*mask 
+
+
+    # channel_wise_maps = 1.0/channel_wise_maps
+
+    # mean = np.mean(channel_wise_maps, axis=(2, 3), keepdims=True)
+    # std = np.std(channel_wise_maps, axis=(2, 3), keepdims=True)
+    # epsilon = 1e-8 
+    # channel_wise_maps_norm = (channel_wise_maps - mean) / (std + epsilon)
+
+
+    min_vals = np.min(channel_wise_maps, axis=(2, 3), keepdims=True)
+    max_vals = np.max(channel_wise_maps, axis=(2, 3), keepdims=True)
+    denominator = np.maximum(max_vals - min_vals, 1e-15)
+    channel_wise_maps_norm = (channel_wise_maps - min_vals) / denominator
+
+    # channel_wise_maps = (1+(channel_wise_maps_norm*-1)) * mask
+
+
+    channel_wise_maps = channel_wise_maps_norm
+
+
+    # channel_wise_maps = channel_wise_maps_norm
+    # channel_wise_maps = 1.0/channel_wise_maps
+
+    # channel_wise_maps = np.where(mask!=0, channel_wise_maps_norm, channel_wise_maps_norm.max())
+
+    # channel_wise_maps = 1.0/(channel_wise_maps+1)
+
     # channel_wise_maps = (1.0/spatial_maps)*mask
-    channel_wise_maps = (spatial_maps.max()/spatial_maps)*mask  
+    # channel_wise_maps = (spatial_maps.max()/spatial_maps)*mask  
     # channel_wise_maps = gaussian_filter(channel_wise_maps, sigma=0.5)
         
     assert channel_wise_maps.shape == (len(x), len(clusters), m, n)
