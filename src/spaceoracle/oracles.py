@@ -56,6 +56,7 @@ class Oracle(ABC):
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
         self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
+        self.pcs = None
         
         if 'imputed_count' not in self.adata.layers:
             self.pcs = self.perform_PCA(self.adata)

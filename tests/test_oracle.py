@@ -55,6 +55,13 @@ def test_oracle_initialization(mock_adata_with_true_betas):
     adata = mock_adata_with_true_betas
     oracle = Oracle(adata)
     assert 'imputed_count' in oracle.adata.layers
+    assert oracle.pcs is None
+    assert oracle.gene2index is not None
+
+    del adata.layers['imputed_count']
+    adata = mock_adata_with_true_betas
+    oracle = Oracle(adata)
+    assert 'imputed_count' in oracle.adata.layers
     assert oracle.pcs is not None
     assert oracle.gene2index is not None
 
