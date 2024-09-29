@@ -71,3 +71,5 @@ SpaceOracle.knn_imputation(adata_train, pcs)
 SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
 pcs = SpaceOracle.perform_PCA(adata_test)
 SpaceOracle.knn_imputation(adata_test, pcs)
+
+
