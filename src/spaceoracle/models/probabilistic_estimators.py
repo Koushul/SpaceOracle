@@ -505,11 +505,12 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
     def build_lr_model(self, ligands, lr_dict, embed_dim=5):
         def get_receptor_beta_model(receptor_ligands):
             return nn.Sequential(
-                        nn.Linear(len(receptor_ligands), embed_dim), # batch, distance, expr for each cell within radius
+                        nn.Linear(3, embed_dim), # batch, distance for each cell within radius
                         nn.ReLU(),
                         nn.Linear(embed_dim, embed_dim),
                         nn.ReLU(),
-                        nn.MaxPool2d(embed_dim)
+                        # nn.Linear(embed_dim, len(receptor_ligands))
+                        nn.Linear(embed_dim, 1)
                         ).to(device)
         
         # reverse dictionary, get the ligands that affect each receptor
@@ -547,30 +548,36 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
 
         return y_pred
 
-    def predict_y_from_lrs(self, dists, ligs, recs):
+    def predict_y_from_lrs(self, dists, cts, ligs, recs):
+        # need to give cell types not just dists
         # also need to create add coef aka beta_0
         ligs = ligs.to(device)
         recs = recs.to(device)
+        cts = cts.to(device).unsqueeze(-1)
+        dists = dists.to(device)
         batch_y = []
         for i, rec in enumerate(self.receptors):
             rl_model = self.receptor_beta_dicts[rec]
-            rec_ligs = ligs[:, :, self.rl_dict[rec]] # batch, neighbors, ligand
-            rbeta = rl_model(rec_ligs)
-            batch_r = rbeta.flatten() * recs[:, i].flatten()
+            rec_ligs = ligs[:, :, self.rl_dict[rec]]            # batch, neighbor, ligand
+            input_x = torch.concatenate([dists, cts], dim=-1)   # batch, neighbor, (x, y, ct) 
+            rbeta = rl_model(input_x)
+            rbeta = (rbeta * rec_ligs)
+            rbeta = torch.sum(rbeta, axis=1)
+            batch_r = torch.sum(rbeta, axis=-1) * recs[:, i]
             batch_y.append(batch_r)
-
+            
         batch_y = torch.stack(batch_y, dim=0)
         y_pred = torch.sum(batch_y, axis=0) # check these axes and such
         return y_pred # batch,
 
 
     def predict_y(self, model, betas, batch_labels, inputs_x,
-                   dists, ligs, recs, anchors=None, lambd=0.2):
+                   dists, batch_cts, ligs, recs, anchors=None, lambd=0.2):
         y_tf = self.predict_y_from_tfs(model, betas, batch_labels, inputs_x, anchors)
         if not self.ligand_affected:
             return y_tf
         
-        y_lr = self.predict_y_from_lrs(dists, ligs, recs)
+        y_lr = self.predict_y_from_lrs(dists, batch_cts, ligs, recs)
         return y_tf*(1-lambd) + y_lr*(lambd)
 
     @torch.no_grad()
@@ -585,7 +592,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         
         for tf_load, lr_load in dataloader:
             batch_spatial, batch_x, batch_y, batch_labels = tf_load 
-            batch_dists, batch_ligs, batch_recs = lr_load
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
 
             # get TF betas 
             tf_betas = self.model(batch_spatial.to(device), batch_labels.to(device))
@@ -613,7 +620,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         total_loss = 0
         for tf_load, lr_load in dataloader:
             batch_spatial, batch_x, batch_y, batch_labels = tf_load 
-            batch_dists, batch_ligs, batch_recs = lr_load
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
             optimizer.zero_grad()
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             # if self.cluster_grn:
@@ -624,7 +631,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             )
 
             y_pred = self.predict_y(model, betas, batch_labels, batch_x, 
-                                    batch_dists, batch_ligs, batch_recs, anchors)
+                                    batch_dists, batch_cts, batch_ligs, batch_recs, anchors)
             
             loss = criterion(y_pred.squeeze(), batch_y.to(device).squeeze())
             loss += 1e-3*((betas.mean(0) - torch.from_numpy(anchors).float().mean(0).to(device))**2).sum()
@@ -641,7 +648,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         total_loss = 0
         for tf_load, lr_load in dataloader:
             batch_spatial, batch_x, batch_y, batch_labels = tf_load 
-            batch_dists, batch_ligs, batch_recs = lr_load
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
 
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             
@@ -649,7 +656,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             #     betas = self._mask_betas(betas, batch_labels)
             
             outputs = self.predict_y(model, betas, batch_labels, batch_x, 
-                                    batch_dists, batch_ligs, batch_recs, anchors=None)
+                                    batch_dists, batch_cts, batch_ligs, batch_recs, anchors=None)
             loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
             total_loss += loss.item()
         
@@ -665,12 +672,12 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         y_preds = []
         for tf_load, lr_load in dataloader:
             batch_spatial, batch_x, batch_y, batch_labels = tf_load 
-            batch_dists, batch_ligs, batch_recs = lr_load
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
 
             betas = self.model(batch_spatial.to(device), batch_labels.to(device))
             outputs = self.predict_y(
                         self.model, betas, batch_labels, batch_x, 
-                        batch_dists, batch_ligs, batch_recs, anchors=None)
+                        batch_dists, batch_cts, batch_ligs, batch_recs, anchors=None)
             y_truths.extend(batch_y)
             y_preds.extend(outputs.flatten())
         

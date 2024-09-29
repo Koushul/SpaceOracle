@@ -113,7 +113,7 @@ class SpaceOracleDataset(SpatialDataset):
 
 class LigRecDataset(SpaceOracleDataset):
     def __init__(
-            self, adata, target_gene, regulators, ligands, receptors, radius=20,
+            self, adata, target_gene, regulators, ligands, receptors, radius=30,
             spatial_dim=16, annot='rctd_cluster', layer='imputed_count', rotate_maps=True
         ):
         super().__init__(adata, target_gene, regulators, spatial_dim=spatial_dim, 
@@ -153,15 +153,22 @@ class LigRecDataset(SpaceOracleDataset):
         distances = self.xy[neighbors].squeeze() 
         pad_size = self.context - nneighbors
         distX = np.vstack([distances, np.zeros((pad_size, 2))])
+        celltypes = self.clusters[neighbors].reshape(-1)
+        if len(neighbors) <= 0:
+            ctX = np.zeros((pad_size))
+        else:
+            ctX = np.concatenate([celltypes, np.zeros((pad_size))])
 
         nligands = len(self.ligands)
-        nreceptors = len(self.receptors)
         ligX = self.ligX[neighbors]
         ligX = ligX.reshape(nneighbors, nligands)
         ligX = np.vstack([ligX, np.zeros((pad_size, ligX.shape[1]))])
-
+        
         recX = self.recX[index]
 
         tf_load = (spatial_info, tf_exp, target_gene_exp, cluster_info)
-        lr_load = (torch.from_numpy(distX), torch.from_numpy(ligX).float(), torch.from_numpy(recX).float())
+        lr_load = ( torch.from_numpy(distX).float(), 
+                    torch.from_numpy(ctX).float(), 
+                    torch.from_numpy(ligX).float(), 
+                    torch.from_numpy(recX).float())
         return tf_load, lr_load
