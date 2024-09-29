@@ -579,7 +579,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         dataloader = self._build_dataloaders_from_adata(
             self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=1024, 
                 mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
-
+        print(len(dataloader))
         tf_beta_list = []
         rec_beta_list = []
         
@@ -659,7 +659,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
     def get_preds(self):
         dataloader = self._build_dataloaders_from_adata(
             self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=32, 
-            mode='infer', rotate_maps=True, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
+            mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
 
         y_truths = []
         y_preds = []
@@ -700,7 +700,6 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             spatial_dim=spatial_dim
         )
 
-
         model = NicheAttentionNetwork(
             n_regulators=len(self.regulators),
             in_channels=self.n_clusters,
@@ -728,6 +727,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
                 unit='epochs'
             )
             pbar.refresh()
+
             
         for epoch in range(max_epochs):
             training_loss = self._training_loop(
@@ -785,6 +785,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         )
 
         if mode == 'infer':
+            params['drop_last'] = False
             dataloader = DataLoader(dataset, shuffle=False, **params)
             return dataloader
 
@@ -800,5 +801,4 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
                 dataset, [split, len(dataset)-split], generator=generator)
             train_dataloader = DataLoader(train_dataset, shuffle=True, **params)
             valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
-
             return train_dataloader, valid_dataloader
