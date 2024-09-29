@@ -144,7 +144,6 @@ class BayesianRegression(AbstractEstimator):
         # guide = AutoDiagonalNormal(model)
         adam = pyro.optim.Adam({"lr": learning_rate, "weight_decay": 0.0})
         svi = SVI(model, guide, adam, loss=Trace_ELBO())
-        # svi = SVI(model, guide, adam, loss=self.simple_elbo)
 
         pyro.clear_param_store()
 
