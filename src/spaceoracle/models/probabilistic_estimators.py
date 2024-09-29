@@ -548,9 +548,6 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         return y_pred
 
     def predict_y_from_lrs(self, dists, ligs, recs):
-        ### IMPORTANT: CHECK INDEXING, PLACEHOLDER AXES FOR NOW LMAO
-        ### also need to make sure only the ligands interacting with receptor are factored in to beta
-        ### probably do this by using masks rather than in dataloader?
         # also need to create add coef aka beta_0
         ligs = ligs.to(device)
         recs = recs.to(device)
@@ -575,6 +572,40 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         
         y_lr = self.predict_y_from_lrs(dists, ligs, recs)
         return y_tf*(1-lambd) + y_lr*(lambd)
+
+    @torch.no_grad()
+    def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, beta_dists=None, layer=None):
+        
+        dataloader = self._build_dataloaders_from_adata(
+            self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=1024, 
+                mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
+
+        tf_beta_list = []
+        rec_beta_list = []
+        
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_ligs, batch_recs = lr_load
+
+            # get TF betas 
+            tf_betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            tf_beta_list.extend(tf_betas.cpu().numpy())
+
+            # get receptor betas from ligands
+            ligs = batch_ligs.to(device)
+            recs = batch_recs.to(device)
+            batch_y = []
+
+            batch_rbetas = []
+            for i, rec in enumerate(self.receptors):
+                rl_model = self.receptor_beta_dicts[rec]
+                rec_ligs = ligs[:, :, self.rl_dict[rec]] # batch, neighbors, ligand
+                rbeta = rl_model(rec_ligs)
+                batch_rbetas.extend(rbeta)
+            
+            rec_beta_list.append(batch_rbetas)
+        
+        return torch.tensor(tf_beta_list), torch.tensor(rec_beta_list)
 
 
     def _training_loop(self, model, dataloader, criterion, optimizer):
@@ -603,7 +634,6 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             total_loss += loss.item()
                     
         return total_loss / len(dataloader)
-            
 
     @torch.no_grad()
     def _validation_loop(self, model, dataloader, criterion, cluster_grn = False):
@@ -615,8 +645,8 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
 
             betas = model(batch_spatial.to(device), batch_labels.to(device))
             
-            if cluster_grn:
-                betas = self._mask_betas(betas, batch_labels)
+            # if cluster_grn:
+            #     betas = self._mask_betas(betas, batch_labels)
             
             outputs = self.predict_y(model, betas, batch_labels, batch_x, 
                                     batch_dists, batch_ligs, batch_recs, anchors=None)
@@ -624,6 +654,27 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             total_loss += loss.item()
         
         return total_loss / len(dataloader)
+    
+    @torch.no_grad()
+    def get_preds(self):
+        dataloader = self._build_dataloaders_from_adata(
+            self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=32, 
+            mode='infer', rotate_maps=True, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
+
+        y_truths = []
+        y_preds = []
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_ligs, batch_recs = lr_load
+
+            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            outputs = self.predict_y(
+                        self.model, betas, batch_labels, batch_x, 
+                        batch_dists, batch_ligs, batch_recs, anchors=None)
+            y_truths.extend(batch_y)
+            y_preds.extend(outputs.flatten())
+        
+        return torch.tensor(y_truths), torch.tensor(y_preds)
 
     def _build_model(
         self,
@@ -703,7 +754,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
     def _build_dataloaders_from_adata(adata, target_gene, regulators, ligands, receptors, batch_size=32, 
     mode='train', rotate_maps=True, annot='rctd_cluster', layer='imputed_count', spatial_dim=64, test_size=0.2):
 
-        assert mode in ['train', 'train_test']
+        assert mode in ['train', 'train_test', 'infer']
         set_seed(42)
 
         xy = adata.obsm['spatial']
@@ -732,6 +783,10 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             spatial_dim=spatial_dim,
             rotate_maps=rotate_maps
         )
+
+        if mode == 'infer':
+            dataloader = DataLoader(dataset, shuffle=False, **params)
+            return dataloader
 
         if mode == 'train':
             train_dataloader = DataLoader(dataset, shuffle=True, **params)
