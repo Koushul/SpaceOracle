@@ -514,12 +514,13 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         
         # reverse dictionary, get the ligands that affect each receptor
         rl_dict = defaultdict(list)
-        for ligand in ligands:
+        for idx, ligand in enumerate(ligands):
             receptors = lr_dict[ligand]
             for receptor in receptors:
                 if ligand not in rl_dict[receptor]:
-                    rl_dict[receptor].append(ligand)
-        
+                    rl_dict[receptor].append(idx)
+        self.rl_dict = rl_dict
+
         # each receptor learns beta that is a function of its ligands
         receptor_beta_dicts = {
             rec: get_receptor_beta_model(rec_ligs) for rec, rec_ligs in rl_dict.items()}
@@ -556,7 +557,8 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         batch_y = []
         for i, rec in enumerate(self.receptors):
             rl_model = self.receptor_beta_dicts[rec]
-            rbeta = rl_model(ligs)
+            rec_ligs = ligs[:, :, self.rl_dict[rec]] # batch, neighbors, ligand
+            rbeta = rl_model(rec_ligs)
             batch_r = rbeta.flatten() * recs[:, i].flatten()
             batch_y.append(batch_r)
 
