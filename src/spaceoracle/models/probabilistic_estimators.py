@@ -601,11 +601,11 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
                 rl_model = self.receptor_beta_dicts[rec]
                 rec_ligs = ligs[:, :, self.rl_dict[rec]] # batch, neighbors, ligand
                 rbeta = rl_model(rec_ligs)
-                batch_rbetas.extend(rbeta)
+                batch_rbetas.append(rbeta)
             
-            rec_beta_list.append(batch_rbetas)
+            rec_beta_list.append(torch.cat(batch_rbetas, dim=1).squeeze())
         
-        return torch.tensor(tf_beta_list), torch.tensor(rec_beta_list)
+        return torch.tensor(tf_beta_list), torch.vstack(rec_beta_list)
 
 
     def _training_loop(self, model, dataloader, criterion, optimizer):
