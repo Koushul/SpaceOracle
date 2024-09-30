@@ -618,9 +618,8 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
                 rbeta = torch.sum(rbeta, axis=1)  # sum over neighbors
                 rbeta = torch.sum(rbeta, axis=1) # sum over ligands targeting receptor
                 batch_rbetas.append(rbeta)
-                print(rbeta.shape)
-            batch_rbetas = torch.cat(batch_rbetas)
-            print(batch_rbetas.shape)
+            
+            batch_rbetas = torch.stack(batch_rbetas,dim=-1)
             rec_beta_list.append(batch_rbetas)
         
         return torch.tensor(tf_beta_list), torch.vstack(rec_beta_list)
