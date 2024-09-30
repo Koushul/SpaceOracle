@@ -126,7 +126,7 @@ class LigRecDataset(SpaceOracleDataset):
         self.recX =  adata.to_df(layer=layer)[self.receptors].values
         self.dist_matrix = self.compute_distances(adata.obsm['X_spatial'])
         # max number of neighbors within radius
-        self.context = np.max([len(np.argwhere(arr < self.radius)) for arr in self.dist_matrix]) 
+        self.context = np.max([len(np.argwhere(arr < self.radius)) for arr in self.dist_matrix]) + 1
 
     def compute_distances(self, coords):
         diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
@@ -150,13 +150,14 @@ class LigRecDataset(SpaceOracleDataset):
         neighbors = np.argwhere((arr < self.radius) & (arr != 0))
         nneighbors = len(neighbors)
         
-        distances = self.xy[neighbors].squeeze() 
+        distances = arr[neighbors].reshape(-1)
         pad_size = self.context - nneighbors
-        distX = np.vstack([distances, np.zeros((pad_size, 2))])
         celltypes = self.clusters[neighbors].reshape(-1)
         if len(neighbors) <= 0:
+            distX = np.zeros((pad_size))
             ctX = np.zeros((pad_size))
         else:
+            distX = np.concatenate([distances, np.zeros((pad_size))])
             ctX = np.concatenate([celltypes, np.zeros((pad_size))])
 
         nligands = len(self.ligands)
@@ -168,7 +169,7 @@ class LigRecDataset(SpaceOracleDataset):
 
         tf_load = (spatial_info, tf_exp, target_gene_exp, cluster_info)
         lr_load = ( torch.from_numpy(distX).float(), 
-                    torch.from_numpy(ctX).float(), 
+                    torch.from_numpy(ctX).long(), 
                     torch.from_numpy(ligX).float(), 
                     torch.from_numpy(recX).float())
         return tf_load, lr_load

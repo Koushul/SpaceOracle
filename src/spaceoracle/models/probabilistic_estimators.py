@@ -491,6 +491,21 @@ class ProbabilisticPixelAttention(VisionEstimator):
         
         return np.array(beta_list)
 
+class ReceptorNN(nn.Module):
+    def __init__(self, num_celltypes, embedding_dim=10):
+        super(ReceptorNN, self).__init__()
+        self.celltype_embedding = nn.Embedding(num_celltypes, embedding_dim)
+        self.fc1 = nn.Linear(embedding_dim+1, 16)  # embedding_dim for cell type + 1 for distance
+        self.fc2 = nn.Linear(16, 8)
+        self.fc3 = nn.Linear(8, 1)
+        
+    def forward(self, distance, ct):
+        celltype_embed = self.celltype_embedding(ct.squeeze())
+        x = torch.cat((distance.unsqueeze(-1), celltype_embed), dim=-1)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        output = self.fc3(x)
+        return output
 
 class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
     def __init__(self, adata, target_gene, grn=None, lrn=None, regulators=None, layer='imputed_count'):
@@ -503,16 +518,6 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             self.receptors = sorted(self.receptor_beta_dicts.keys()) # ensure same order as dataloader
 
     def build_lr_model(self, ligands, lr_dict, embed_dim=5):
-        def get_receptor_beta_model(receptor_ligands):
-            return nn.Sequential(
-                        nn.Linear(3, embed_dim), # batch, distance for each cell within radius
-                        nn.ReLU(),
-                        nn.Linear(embed_dim, embed_dim),
-                        nn.ReLU(),
-                        # nn.Linear(embed_dim, len(receptor_ligands))
-                        nn.Linear(embed_dim, 1)
-                        ).to(device)
-        
         # reverse dictionary, get the ligands that affect each receptor
         rl_dict = defaultdict(list)
         for idx, ligand in enumerate(ligands):
@@ -524,7 +529,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
 
         # each receptor learns beta that is a function of its ligands
         receptor_beta_dicts = {
-            rec: get_receptor_beta_model(rec_ligs) for rec, rec_ligs in rl_dict.items()}
+            rec: ReceptorNN(self.n_clusters, embed_dim).to(device) for rec, rec_ligs in rl_dict.items()}
 
         return receptor_beta_dicts
 
@@ -549,7 +554,6 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         return y_pred
 
     def predict_y_from_lrs(self, dists, cts, ligs, recs):
-        # need to give cell types not just dists
         # also need to create add coef aka beta_0
         ligs = ligs.to(device)
         recs = recs.to(device)
@@ -558,16 +562,16 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
         batch_y = []
         for i, rec in enumerate(self.receptors):
             rl_model = self.receptor_beta_dicts[rec]
-            rec_ligs = ligs[:, :, self.rl_dict[rec]]            # batch, neighbor, ligand
-            input_x = torch.concatenate([dists, cts], dim=-1)   # batch, neighbor, (x, y, ct) 
-            rbeta = rl_model(input_x)
-            rbeta = (rbeta * rec_ligs)
-            rbeta = torch.sum(rbeta, axis=1)
-            batch_r = torch.sum(rbeta, axis=-1) * recs[:, i]
+            rec_ligs = ligs[:, :, self.rl_dict[rec]]         
+            rbeta = rl_model(dists, cts)
+            rbeta = rbeta * rec_ligs
+            rbeta = torch.sum(rbeta, axis=1)  # sum over neighbors
+            rbeta = torch.sum(rbeta, axis=1) # sum over ligands targeting receptor
+            batch_r = rbeta * recs[:, i]
             batch_y.append(batch_r)
             
         batch_y = torch.stack(batch_y, dim=0)
-        y_pred = torch.sum(batch_y, axis=0) # check these axes and such
+        y_pred = torch.sum(batch_y, axis=0) 
         return y_pred # batch,
 
 
@@ -582,11 +586,11 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
 
     @torch.no_grad()
     def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, beta_dists=None, layer=None):
-        
+
         dataloader = self._build_dataloaders_from_adata(
             self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=1024, 
                 mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
-        print(len(dataloader))
+
         tf_beta_list = []
         rec_beta_list = []
         
@@ -595,6 +599,7 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
 
             # get TF betas 
+            # NEED TO FIX THIS (use anchors)
             tf_betas = self.model(batch_spatial.to(device), batch_labels.to(device))
             tf_beta_list.extend(tf_betas.cpu().numpy())
 
@@ -604,13 +609,19 @@ class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
             batch_y = []
 
             batch_rbetas = []
+
             for i, rec in enumerate(self.receptors):
                 rl_model = self.receptor_beta_dicts[rec]
-                rec_ligs = ligs[:, :, self.rl_dict[rec]] # batch, neighbors, ligand
-                rbeta = rl_model(rec_ligs)
+                rec_ligs = ligs[:, :, self.rl_dict[rec]]         
+                rbeta = rl_model(batch_dists.to(device), batch_cts.to(device))
+                rbeta = rbeta * rec_ligs
+                rbeta = torch.sum(rbeta, axis=1)  # sum over neighbors
+                rbeta = torch.sum(rbeta, axis=1) # sum over ligands targeting receptor
                 batch_rbetas.append(rbeta)
-            
-            rec_beta_list.append(torch.cat(batch_rbetas, dim=1).squeeze())
+                print(rbeta.shape)
+            batch_rbetas = torch.cat(batch_rbetas)
+            print(batch_rbetas.shape)
+            rec_beta_list.append(batch_rbetas)
         
         return torch.tensor(tf_beta_list), torch.vstack(rec_beta_list)
 
