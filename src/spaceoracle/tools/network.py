@@ -124,7 +124,8 @@ class SurveyRegulatoryNetwork(CellOracleLinks):
         self.regulator_dict = regulator_masks
 
         return all_regulators
-    
+
+        
 
 
 class DayThreeRegulatoryNetwork(CellOracleLinks):
@@ -145,7 +146,6 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
 
         with open(os.path.join(self.base_pth, 'celltype_assign.json'), 'r') as f:
             self.cluster_labels = json.load(f)
-
 
     
     def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
@@ -178,4 +178,49 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         self.regulator_dict = regulator_masks
 
         return all_regulators
+
+
+class HumanLymphRegulatoryNetwork(CellOracleLinks):
+    def __init__(self, base_pth):
+        if base_pth:
+            self.base_pth = base_pth
+        else:
+            self.base_pth = os.path.join(
+                os.path.dirname(__file__), '..', '..', '..', 'data')
+
+        with open(self.base_pth+'/spaceranger/celloracle_links_hln100.pkl', 'rb') as f:
+            self.links_day3_1 = pickle.load(f)
+        
+        with open(self.base_pth+'/spaceranger/celloracle_coefs_hln100.pkl', 'rb') as f:
+            self.coef_matrix_per_cluster = pickle.load(f)
+ 
+        self.cluster_labels = None
     
+    def get_cluster_regulators(self, adata, target_gene, cluster_name='rctd_cluster', alpha=0.05):
+        adata_clusters = np.unique(adata.obs[cluster_name])
+        regulator_dict = {}
+        all_regulators = set()
+
+        for cluster in adata_clusters:
+            grn_df = self.links_day3_1[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[cluster] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators

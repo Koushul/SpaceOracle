@@ -160,26 +160,6 @@ class modified_VelocytoLoom():
 
 
 
-    def plot_pca(self, dim: List[int]=[0, 1, 2], elev: float=60, azim: float=-140) -> None:
-        """Plot 3d PCA
-        """
-
-        # update color information
-        col_dict = _get_clustercolor_from_anndata(adata=self.adata,
-                                                  cluster_name=self.cluster_column_name,
-                                                  return_as="dict")
-        self.colorandum = np.array([col_dict[i] for i in self.adata.obs[self.cluster_column_name]])
-
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(self.pcs[:, dim[0]],
-                   self.pcs[:, dim[1]],
-                   self.pcs[:, dim[2]],
-                   c=self.colorandum)
-        ax.view_init(elev=elev, azim=azim)
-
-
-
     def knn_imputation(self, k: int=None, metric: str="euclidean", diag: float=1,
                        n_pca_dims: int=None, maximum: bool=False,
                        balanced: bool=False, b_sight: int=None, b_maxl: int=None,

@@ -1,6 +1,3 @@
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
 from abc import ABC, abstractmethod
 import numpy as np
 import sys
@@ -8,6 +5,8 @@ import gc
 import enlighten
 import time
 import pandas as pd
+import matplotlib.pyplot as plt
+import scanpy as sc
 import pickle
 import torch
 from dataclasses import dataclass
@@ -20,10 +19,14 @@ import glob
 import pickle
 import io
 from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+from scipy import sparse
 import warnings
 from sklearn.linear_model import Ridge
+from typing import Tuple, Optional, List
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+from .oracles_co import CellOracle
+from .visualizations.oracle_object_visualization import Oracle_visualization
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -55,15 +58,15 @@ class Oracle(ABC):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
-        self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
-        self.pcs = None
-        
-        if 'imputed_count' not in self.adata.layers:
-            self.pcs = self.perform_PCA(self.adata)
-            self.knn_imputation(self.adata, self.pcs)
+        self.pcs, self.pca = self.perform_PCA(self.adata)
+        self.knn_imputation(self.adata, self.pcs)
+        self.gene2index = dict(zip(
+                self.adata.var_names, 
+                range(len(self.adata.var_names))
+            ))
 
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def perform_PCA(adata, n_components=None, div_by_std=False):
         X = _adata_to_matrix(adata, "normalized_count")
@@ -74,9 +77,9 @@ class Oracle(ABC):
         else:
             pcs = pca.fit_transform(X.T)
 
-        return pcs
+        return pcs, pca
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=None, maximum=False,
@@ -93,7 +96,6 @@ class Oracle(ABC):
             b_sight = int(k * 8)
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
-
 
         space = pcs[:, :n_pca_dims]
 
@@ -168,7 +170,7 @@ class OracleQueue:
         completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
-        locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
+        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
         return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
 
     def create_lock(self, gene):
@@ -188,38 +190,37 @@ class OracleQueue:
     def extract_gene_name(path):
         match = re.search(r'([^/]+)_estimator\.pkl$', path)
         return match.group(1) if match else None
-    
-    @staticmethod
-    def extract_gene_name_from_lock(path):
-        match = re.search(r'([^/]+)\.lock$', path)
-        return match.group(1) if match else None
 
 
 
+class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
-class SpaceOracle(Oracle):
-
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
-    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
+    regularize=True, layer='imputed_count', co_grn=None):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        if co_grn == None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = co_grn
+        
         self.save_dir = save_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
+        self.init_betas = init_betas
         self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.rotate_maps = rotate_maps
-        self.layer = layer
-        self.alpha = alpha
-
+        self.cluster_grn = cluster_grn
+        self.regularize = regularize
         self.beta_dict = None
         self.coef_matrix = None
+        self.layer = layer
 
         if 'spatial_maps' not in self.adata.obsm:
             self.imbue_adata_with_space(
@@ -256,18 +257,14 @@ class SpaceOracle(Oracle):
             autorefresh=True,
         )
 
-
         while not self.queue.is_empty:
             gene = next(self.queue)
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            # estimator = PixelAttention(
-            #     self.adata, target_gene=gene, layer=self.layer)
+            estimator = PixelAttention(
+                self.adata, target_gene=gene, layer=self.layer, co_grn=self.grn, annot=self.annot)
 
-            estimator = ProbabilisticPixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
-            
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
                 continue
@@ -288,25 +285,19 @@ class SpaceOracle(Oracle):
                     learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
                     batch_size=self.batch_size,
+                    init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
-                    alpha=self.alpha,
+                    cluster_grn=self.cluster_grn,
+                    regularize=self.regularize,
                     pbar=train_bar
                 )
 
-                (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
+                model, regulators, target_gene = estimator.export()
                 assert target_gene == gene
 
                 with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump(
-                        {
-                            'model': model.state_dict(), 
-                            'regulators': regulators,
-                            'beta_dists': beta_dists,
-                            'is_real': is_real,
-                        }, 
-                        f
-                    )
+                    pickle.dump({'model': model.state_dict(), 'regulators': regulators}, f)
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
                     del model
@@ -323,14 +314,11 @@ class SpaceOracle(Oracle):
             loaded_dict =  CPU_Unpickler(f).load()
 
             model = NicheAttentionNetwork(
-                len(loaded_dict['regulators']), 
-                nclusters, 
-                spatial_dim
-            )
+                np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
             model.load_state_dict(loaded_dict['model'])
-
+            
             loaded_dict['model'] = model
-
+        
         return loaded_dict
     
     
@@ -343,18 +331,13 @@ class SpaceOracle(Oracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-        beta_dists = estimator_dict.get('beta_dists', None)
+       # estimator_dict['model'] = torch.compile(estimator_dict['model'])
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
-        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
-
-        if beta_dists:
-            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
-            betas = betas * anchors
 
         return BetaOutput(
-            betas=betas,
+            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
@@ -362,9 +345,12 @@ class SpaceOracle(Oracle):
         )
 
 
-    def _get_spatial_betas_dict(self):
+    def _get_spatial_betas_dict(self, genes=None):
         beta_dict = {}
-        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
+        if genes == None:
+            genes = self.queue.completed_genes
+
+        for gene in tqdm(genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
@@ -399,7 +385,26 @@ class SpaceOracle(Oracle):
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
+    def simulate_shift(self, perturb_condition={}, n_propagation=3):
+        '''multi-gene level perturbation'''
+
+        gene_mtx = self.adata.layers['imputed_count']
+        simulation_input = gene_mtx.copy()
+
+        for gene, gex in perturb_condition.items():
+            target_index = self.gene2index[gene]
+            simulation_input[:, target_index] = gex
+        
+        delta_input = simulation_input - gene_mtx
+        delta_simulated = delta_input.copy()
+
+        gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation) 
+        self.adata.layers['perturbed_so'] = gem_simulated
+        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
+    
     def perturb(self, gene_mtx, target, n_propagation=3):
+        '''single gene knock-out'''
+
         assert target in self.adata.var_names
 
         target_index = self.gene2index[target]  
@@ -408,6 +413,12 @@ class SpaceOracle(Oracle):
         simulation_input[:, target_index] = 0 # ko target gene
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
+
+        gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation)
+        return gem_simulated
+
+    def do_simulation(self, gene_mtx, delta_input, delta_simulated, n_propagation):
+        '''perturb helper function'''
 
         if self.beta_dict is None:
             self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
@@ -431,31 +442,23 @@ class SpaceOracle(Oracle):
 
 
     @staticmethod
-    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False, method='fast'):
+    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False):
         clusters = np.array(adata.obs[annot])
         xy = np.array(adata.obsm['spatial'])
 
-        if method == 'fast':
-            sp_maps = xyc2spatial_fast(
-                xyc = np.column_stack([xy, clusters]),
-                m=spatial_dim,
-                n=spatial_dim,
-            ).astype(np.float32)
+        # sp_maps = xyc2spatial(
+        #     xy[:, 0], 
+        #     xy[:, 1], 
+        #     clusters,
+        #     spatial_dim, spatial_dim, 
+        #     disable_tqdm=False
+        # ).astype(np.float32)
 
-            # min_vals = np.min(sp_maps, axis=(2, 3), keepdims=True)
-            # max_vals = np.max(sp_maps, axis=(2, 3), keepdims=True)
-            # denominator = np.maximum(max_vals - min_vals, 1e-15)
-            # channel_wise_maps_norm = (sp_maps - min_vals) / denominator
-            # sp_maps = channel_wise_maps_norm
-                
-        else:
-            sp_maps = xyc2spatial(
-                xy[:, 0], 
-                xy[:, 1], 
-                clusters,
-                spatial_dim, spatial_dim, 
-                disable_tqdm=False
-            ).astype(np.float32)
+        sp_maps = xyc2spatial_fast(
+            xyc = np.column_stack([xy, clusters]),
+            m=spatial_dim,
+            n=spatial_dim,
+        ).astype(np.float32)
 
         if in_place:
             adata.obsm['spatial_maps'] = sp_maps
@@ -465,7 +468,7 @@ class SpaceOracle(Oracle):
 
 
     def compute_betas(self):
-        self.beta_dict = self._get_spatial_betas_dict()
+        self.beta_dict = self._get_spatial_betas_dict(genes=genes)
         self.coef_matrix = self._get_co_betas()
 
 
@@ -517,7 +520,7 @@ class SpaceOracle(Oracle):
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        simulation_input[target] = 0 # ko target gene
+        simulation_input[target_index] = 0 # ko target gene
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
 
@@ -526,7 +529,8 @@ class SpaceOracle(Oracle):
         
         for i in range(n_propagation):
             delta_simulated = delta_simulated.dot(self.coef_matrix)
-            delta_simulated[delta_input != 0] = delta_input
+            # delta_simulated[delta_input != 0] = delta_input
+            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
             gem_tmp = gene_mtx + delta_simulated
             gem_tmp[gem_tmp<0] = 0
             delta_simulated = gem_tmp - gene_mtx
@@ -534,45 +538,3 @@ class SpaceOracle(Oracle):
         gem_simulated = gene_mtx + delta_simulated
 
         return gem_simulated
-
-
-
-# def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
-#     """Calculate a nearest neighbour distance matrix
-
-#     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
-#     To achieve that we call kneighbors_graph with X = None
-#     """
-#     if metric == "correlation":
-#         nn = NearestNeighbors(
-#             n_neighbors=k, metric="correlation", 
-#             algorithm="brute", n_jobs=n_jobs)
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-#     else:
-#         nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-
-
-# def connectivity_to_weights(mknn, axis=1):
-#     if type(mknn) is not sparse.csr_matrix:
-#         mknn = mknn.tocsr()
-#     return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
-
-# def convolve_by_sparse_weights(data, w):
-#     w_ = w.T
-#     assert np.allclose(w_.sum(0), 1)
-#     return sparse.csr_matrix.dot(data, w_)
-
-
-# def _adata_to_matrix(adata, layer_name, transpose=True):
-#     if isinstance(adata.layers[layer_name], np.ndarray):
-#         matrix = adata.layers[layer_name].copy()
-#     else:
-#         matrix = adata.layers[layer_name].todense().A.copy()
-
-#     if transpose:
-#         matrix = matrix.transpose()
-
-#     return matrix.copy(order="C")
