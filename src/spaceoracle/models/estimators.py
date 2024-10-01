@@ -136,9 +136,11 @@ class VisionEstimator(AbstractEstimator):
 
         self.adata = adata
         self.target_gene = target_gene
+
+        if co_grn == None:
+            co_grn = DayThreeRegulatoryNetwork()
         self.grn = co_grn
         
-
         if regulators == None and n_clusters == None:
             self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene, cluster_name=annot)
             self.n_clusters = len(self.adata.obs[annot].unique())
