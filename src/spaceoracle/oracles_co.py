@@ -5,9 +5,9 @@ from scipy.stats import norm as normal
 from scipy import sparse               
 from sklearn.neighbors import NearestNeighbors 
 from numba import jit
-from velocyto.estimation import (colDeltaCor, colDeltaCorLog10,
-                                 colDeltaCorLog10partial, colDeltaCorpartial,
-                                 colDeltaCorSqrt, colDeltaCorSqrtpartial)
+# from velocyto.estimation import (colDeltaCor, colDeltaCorLog10,
+#                                  colDeltaCorLog10partial, colDeltaCorpartial,
+#                                  colDeltaCorSqrt, colDeltaCorSqrtpartial)
 from typing import Tuple, List
 from tqdm import tqdm
 
@@ -208,6 +208,9 @@ class CellOracle:
 
 
             ###
+            from velocyto.estimation import (colDeltaCor, colDeltaCorLog10,
+                                 colDeltaCorLog10partial, colDeltaCorpartial,
+                                 colDeltaCorSqrt, colDeltaCorSqrtpartial)
             ###
             self.corrcoef = colDeltaCorpartial(X, delta_X, neigh_ixs, threads=threads)
             if calculate_randomized:

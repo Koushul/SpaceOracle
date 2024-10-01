@@ -24,4 +24,4 @@ tqdm==4.66.4
 pyarrow==17.0.0
 enlighten
 pyro-ppl
-velocyto==0.17.17
+# velocyto==0.17.17
