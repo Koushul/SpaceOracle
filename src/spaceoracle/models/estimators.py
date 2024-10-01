@@ -142,7 +142,7 @@ class VisionEstimator(AbstractEstimator):
         self.grn = co_grn
         
         if regulators == None and n_clusters == None:
-            self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene, cluster_name=annot)
+            self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
             self.n_clusters = len(self.adata.obs[annot].unique())
         else:
             self.regulators = regulators
