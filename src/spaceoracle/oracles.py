@@ -298,7 +298,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
                     learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
                     batch_size=self.batch_size,
-                    init_betas=self.init_betas,
+                    # init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
                     cluster_grn=self.cluster_grn,
