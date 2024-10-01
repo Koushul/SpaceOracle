@@ -130,7 +130,7 @@ class SimpleCNN(nn.Module):
 
 
 class VisionEstimator(AbstractEstimator):
-    def __init__(self, adata, target_gene, co_grn, regulators=None, n_clusters=None, layer='imputed_count', annot='rctd_cluster'):
+    def __init__(self, adata, target_gene, co_grn=None, regulators=None, n_clusters=None, layer='imputed_count', annot='rctd_cluster'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
 
