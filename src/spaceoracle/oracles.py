@@ -58,14 +58,14 @@ class Oracle(ABC):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
-        self.pcs = self.perform_PCA(self.adata)
-        self.pca = self.get_PCA(self.adata)
+        self.gene2index = dict(zip(self.adata.var_names, range(len(self.adata.var_names))))
+        self.pcs = None
+        
+        if 'imputed_count' not in self.adata.layers:
+            self.pca = self.get_PCA(self.adata)
+            self.pcs = self.perform_PCA(self.adata)
+            self.knn_imputation(self.adata, self.pcs)
 
-        self.knn_imputation(self.adata, self.pcs)
-        self.gene2index = dict(zip(
-                self.adata.var_names, 
-                range(len(self.adata.var_names))
-            ))
 
     @staticmethod
     def get_PCA(adata, n_components=None, div_by_std=False):
@@ -73,9 +73,9 @@ class Oracle(ABC):
 
         pca = PCA(n_components=n_components)
         if div_by_std:
-            pcs = pca.fit_transform(X.T / X.std(0))
+            pca.fit(X.T / X.std(0))
         else:
-            pcs = pca.fit_transform(X.T)
+            pca.fit(X.T)
 
         return pca
 
