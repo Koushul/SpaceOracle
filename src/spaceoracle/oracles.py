@@ -58,13 +58,26 @@ class Oracle(ABC):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         self.adata.layers['normalized_count'] = self.adata.X.copy()
-        self.pcs, self.pca = self.perform_PCA(self.adata)
+        self.pcs = self.perform_PCA(self.adata)
+        self.pca = self.get_PCA(self.adata)
+
         self.knn_imputation(self.adata, self.pcs)
         self.gene2index = dict(zip(
                 self.adata.var_names, 
                 range(len(self.adata.var_names))
             ))
 
+    @staticmethod
+    def get_PCA(adata, n_components=None, div_by_std=False):
+        X = _adata_to_matrix(adata, "normalized_count")
+
+        pca = PCA(n_components=n_components)
+        if div_by_std:
+            pcs = pca.fit_transform(X.T / X.std(0))
+        else:
+            pcs = pca.fit_transform(X.T)
+
+        return pca
 
     ## cannibalized from CellOracle
     @staticmethod
@@ -77,7 +90,7 @@ class Oracle(ABC):
         else:
             pcs = pca.fit_transform(X.T)
 
-        return pcs, pca
+        return pcs
 
     ## cannibalized from CellOracle
     @staticmethod
