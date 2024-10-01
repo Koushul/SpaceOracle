@@ -302,7 +302,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
                     # cluster_grn=self.cluster_grn,
-                    regularize=self.regularize,
+                    # regularize=self.regularize,
                     pbar=train_bar
                 )
 
