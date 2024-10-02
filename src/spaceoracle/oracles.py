@@ -1,3 +1,6 @@
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 from abc import ABC, abstractmethod
 import numpy as np
 import sys
@@ -5,8 +8,6 @@ import gc
 import enlighten
 import time
 import pandas as pd
-import matplotlib.pyplot as plt
-import scanpy as sc
 import pickle
 import torch
 from dataclasses import dataclass
@@ -19,20 +20,15 @@ import glob
 import pickle
 import io
 from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
-from scipy import sparse
 import warnings
 from sklearn.linear_model import Ridge
-from typing import Tuple, Optional, List
 
-from .oracles_co import CellOracle
-from .visualizations.oracle_object_visualization import Oracle_visualization
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
-from .models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.utils import (
     CPU_Unpickler,
@@ -140,7 +136,6 @@ class BetaOutput:
     target_gene_index: int
     regulators_index: List[int]
 
-
 class OracleQueue:
 
     def __init__(self, model_dir, all_genes):
@@ -184,7 +179,7 @@ class OracleQueue:
         completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
-        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
+        locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
         return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
 
     def create_lock(self, gene):
@@ -204,37 +199,35 @@ class OracleQueue:
     def extract_gene_name(path):
         match = re.search(r'([^/]+)_estimator\.pkl$', path)
         return match.group(1) if match else None
+    
+    @staticmethod
+    def extract_gene_name_from_lock(path):
+        match = re.search(r'([^/]+)\.lock$', path)
+        return match.group(1) if match else None
 
+class SpaceOracle(Oracle):
 
-
-class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
-
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', init_betas='zeros', 
-    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, cluster_grn=True, 
-    regularize=True, layer='imputed_count', co_grn=None):
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
+    layer='imputed_count', alpha=0.05):
         
         super().__init__(adata)
-        if co_grn == None:
-            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        else:
-            self.grn = co_grn
-        
+        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         self.save_dir = save_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
-        self.init_betas = init_betas
         self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.rotate_maps = rotate_maps
-        self.cluster_grn = cluster_grn
-        self.regularize = regularize
+        self.layer = layer
+        self.alpha = alpha
+
         self.beta_dict = None
         self.coef_matrix = None
-        self.layer = layer
 
         if 'spatial_maps' not in self.adata.obsm:
             self.imbue_adata_with_space(
@@ -358,13 +351,18 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
         estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
         estimator_dict['model'].to(device).eval()
-       # estimator_dict['model'] = torch.compile(estimator_dict['model'])
+        beta_dists = estimator_dict.get('beta_dists', None)
 
         input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
         input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
+        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
+
+        if beta_dists:
+            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
+            betas = betas * anchors
 
         return BetaOutput(
-            betas=estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy(),
+            betas=betas,
             regulators=estimator_dict['regulators'],
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
@@ -372,12 +370,9 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         )
 
 
-    def _get_spatial_betas_dict(self, genes=None):
+    def _get_spatial_betas_dict(self):
         beta_dict = {}
-        if genes == None:
-            genes = self.queue.completed_genes
-
-        for gene in tqdm(genes, desc='Estimating betas globally'):
+        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
@@ -467,25 +462,32 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
         return gem_simulated
 
-
     @staticmethod
-    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False):
+    def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False, method='fast'):
         clusters = np.array(adata.obs[annot])
         xy = np.array(adata.obsm['spatial'])
 
-        # sp_maps = xyc2spatial(
-        #     xy[:, 0], 
-        #     xy[:, 1], 
-        #     clusters,
-        #     spatial_dim, spatial_dim, 
-        #     disable_tqdm=False
-        # ).astype(np.float32)
+        if method == 'fast':
+            sp_maps = xyc2spatial_fast(
+                xyc = np.column_stack([xy, clusters]),
+                m=spatial_dim,
+                n=spatial_dim,
+            ).astype(np.float32)
 
-        sp_maps = xyc2spatial_fast(
-            xyc = np.column_stack([xy, clusters]),
-            m=spatial_dim,
-            n=spatial_dim,
-        ).astype(np.float32)
+            # min_vals = np.min(sp_maps, axis=(2, 3), keepdims=True)
+            # max_vals = np.max(sp_maps, axis=(2, 3), keepdims=True)
+            # denominator = np.maximum(max_vals - min_vals, 1e-15)
+            # channel_wise_maps_norm = (sp_maps - min_vals) / denominator
+            # sp_maps = channel_wise_maps_norm
+                
+        else:
+            sp_maps = xyc2spatial(
+                xy[:, 0], 
+                xy[:, 1], 
+                clusters,
+                spatial_dim, spatial_dim, 
+                disable_tqdm=False
+            ).astype(np.float32)
 
         if in_place:
             adata.obsm['spatial_maps'] = sp_maps
@@ -495,7 +497,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
 
 
     def compute_betas(self):
-        self.beta_dict = self._get_spatial_betas_dict(genes=genes)
+        self.beta_dict = self._get_spatial_betas_dict()
         self.coef_matrix = self._get_co_betas()
 
 
@@ -547,7 +549,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        simulation_input[target_index] = 0 # ko target gene
+        simulation_input[target] = 0 # ko target gene
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
 
@@ -556,8 +558,7 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
         
         for i in range(n_propagation):
             delta_simulated = delta_simulated.dot(self.coef_matrix)
-            # delta_simulated[delta_input != 0] = delta_input
-            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
+            delta_simulated[delta_input != 0] = delta_input
             gem_tmp = gene_mtx + delta_simulated
             gem_tmp[gem_tmp<0] = 0
             delta_simulated = gem_tmp - gene_mtx
