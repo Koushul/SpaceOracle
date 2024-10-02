@@ -270,14 +270,18 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
             autorefresh=True,
         )
 
+
         while not self.queue.is_empty:
             gene = next(self.queue)
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
 
-            estimator = PixelAttention(
-                self.adata, target_gene=gene, layer=self.layer, co_grn=self.grn, annot=self.annot)
+            # estimator = PixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
 
+            estimator = ProbabilisticPixelAttention(
+                self.adata, target_gene=gene, layer=self.layer)
+            
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
                 continue
@@ -298,19 +302,25 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
                     learning_rate=self.learning_rate, 
                     spatial_dim=self.spatial_dim,
                     batch_size=self.batch_size,
-                    # init_betas=self.init_betas,
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
-                    # cluster_grn=self.cluster_grn,
-                    # regularize=self.regularize,
+                    alpha=self.alpha,
                     pbar=train_bar
                 )
 
-                model, regulators, target_gene = estimator.export()
+                (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
                 with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump({'model': model.state_dict(), 'regulators': regulators}, f)
+                    pickle.dump(
+                        {
+                            'model': model.state_dict(), 
+                            'regulators': regulators,
+                            'beta_dists': beta_dists,
+                            'is_real': is_real,
+                        }, 
+                        f
+                    )
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
                     del model
@@ -327,11 +337,14 @@ class SpaceOracle(Oracle, Oracle_visualization, CellOracle):
             loaded_dict =  CPU_Unpickler(f).load()
 
             model = NicheAttentionNetwork(
-                np.zeros(len(loaded_dict['regulators'])+1), nclusters, spatial_dim)
+                len(loaded_dict['regulators']), 
+                nclusters, 
+                spatial_dim
+            )
             model.load_state_dict(loaded_dict['model'])
-            
+
             loaded_dict['model'] = model
-        
+
         return loaded_dict
     
     
