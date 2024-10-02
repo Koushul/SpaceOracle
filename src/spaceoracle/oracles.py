@@ -32,7 +32,7 @@ from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
-from .models.probabilitistic_estimators import ProbabilisticPixelAttention
+from .models.probabilistic_estimators import ProbabilisticPixelAttention
 
 from .tools.utils import (
     CPU_Unpickler,
