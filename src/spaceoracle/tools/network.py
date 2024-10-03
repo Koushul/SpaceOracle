@@ -196,7 +196,7 @@ class HumanLymphRegulatoryNetwork(CellOracleLinks):
  
         self.cluster_labels = None
     
-    def get_cluster_regulators(self, adata, target_gene, cluster_name='rctd_cluster', alpha=0.05):
+    def get_cluster_regulators(self, adata, target_gene, cluster_name='cluster', alpha=0.05):
         adata_clusters = np.unique(adata.obs[cluster_name])
         regulator_dict = {}
         all_regulators = set()
@@ -208,6 +208,54 @@ class HumanLymphRegulatoryNetwork(CellOracleLinks):
             tfs = list(grn_df.source)
             
             regulator_dict[cluster] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators
+
+
+
+class MouseKidneyRegulatoryNetwork(CellOracleLinks):
+    def __init__(self):
+
+        self.base_pth = os.path.join(
+                os.path.dirname(__file__), '..', '..', '..', 'data')
+
+        with open(self.base_pth+'/kidney/celloracle_links.pkl', 'rb') as f:
+            self.links_day3_1 = pickle.load(f)
+
+        self.annot = 'cluster'
+
+        with open(os.path.join(self.base_pth, 'kidney/celltype_assign.json'), 'r') as f:
+            self.cluster_labels = json.load(f)
+
+    
+    def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
+        adata_clusters = np.unique(adata.obs[self.annot])
+        regulator_dict = {}
+        all_regulators = set()
+
+        for label in adata_clusters:
+            # cluster = self.cluster_labels[str(label)]
+            cluster = label
+            grn_df = self.links_day3_1[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[label] = tfs
             all_regulators.update(tfs)
 
         all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata

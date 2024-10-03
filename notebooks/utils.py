@@ -1,9 +1,14 @@
 import os
 os.environ["OMP_NESTED"] = "FALSE"
-import anndata
 import scanpy as sc
 import pandas as pd 
+import mudata as mu 
+import numpy as np
 import copy
+
+from spaceoracle import SpaceOracle
+
+
 
 
 immune_modules = [18, 19, 33, 48, 58, 70, 74, 76]
@@ -15,6 +20,23 @@ immgen_dict = {
     'Myeloid': [58, 74],
     'Dendritic': [48],
 }
+
+def h5mu_to_h5ad(mdata):
+    x = mdata['xyz'].obs['row']
+    y = mdata['xyz'].obs['col']
+
+    barcodes = np.array(mdata['xyz'].obs.index)
+    coords = np.array([x, y])
+
+    adata = mdata['rna']
+    assert np.all(barcodes == mdata['xyz'].obs.index), f'incorrect order, pls fix' # ensure same order
+    adata_joint = adata[adata.obs.index.isin(barcodes)]
+    adata_joint.obsm['spatial'] = coords.T
+
+    return adata_joint
+
+
+
 
 def get_markers(adata, nsearch=500):
     gene_df = pd.read_excel('../data/immgen/gene_assignment.xls')
@@ -30,12 +52,12 @@ def get_markers(adata, nsearch=500):
     return marker_genes_dict
 
 
-def filter_clusters(adata, c=None):
+def filter_clusters(adata, c=None, annot='rtcd_cluster'):
     if c is None:
         c = []
     
     c = np.array(c).astype(str)
-    mask = ~adata.obs['rctd_cluster'].astype(str).isin(c)
+    mask = ~adata.obs[annot].astype(str).isin(c)
     filtered_adata = adata[mask].copy()
     
     return filtered_adata
@@ -82,15 +104,15 @@ def process_adata(
 
     adata_train = adata_train[:, mask]
     sc.pp.normalize_per_cell(adata_train)
+    return adata_train
 
 
 def get_imputed(adata_train, spatial_dim, annot):
-    from spaceoracle import SpaceOracle
 
     adata_train.layers["normalized_count"] = adata_train.to_df().values
 
     SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, annot=annot, in_place=True)
-    pcs, _ = SpaceOracle.perform_PCA(adata_train)
+    pcs = SpaceOracle.perform_PCA(adata_train)
     SpaceOracle.knn_imputation(adata_train, pcs)
 
     return adata_train
@@ -98,18 +120,18 @@ def get_imputed(adata_train, spatial_dim, annot):
 
 # backwards functionality for visium data
 
-spatial_dim = 64
-adata_train = sc.read_h5ad('../data/slideseq/day3_1.h5ad')
-adata_test = sc.read_h5ad('../data/slideseq/day3_2.h5ad')
+# spatial_dim = 64
+# adata_train = sc.read_h5ad('../data/slideseq/day3_1.h5ad')
+# adata_test = sc.read_h5ad('../data/slideseq/day3_2.h5ad')
 
-immune_genes = get_immune_genes(mouse=True)
-adata_train = process_adata(adata_train, include_genes=immune_genes)
-adata_test = process_adata(adata_train, include_genes=immune_genes)
+# immune_genes = get_immune_genes(mouse=True)
+# adata_train = process_adata(adata_train, include_genes=immune_genes)
+# adata_test = process_adata(adata_train, include_genes=immune_genes)
 
-SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, in_place=True)
-pcs = SpaceOracle.perform_PCA(adata_train)
-SpaceOracle.knn_imputation(adata_train, pcs)
+# SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, in_place=True)
+# pcs = SpaceOracle.perform_PCA(adata_train)
+# SpaceOracle.knn_imputation(adata_train, pcs)
 
-SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
-pcs = SpaceOracle.perform_PCA(adata_test)
-SpaceOracle.knn_imputation(adata_test, pcs)
+# SpaceOracle.imbue_adata_with_space(adata_test, spatial_dim=spatial_dim, in_place=True)
+# pcs = SpaceOracle.perform_PCA(adata_test)
+# SpaceOracle.knn_imputation(adata_test, pcs)

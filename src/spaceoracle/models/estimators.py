@@ -147,7 +147,7 @@ class VisionEstimator(AbstractEstimator):
         else:
             self.regulators = regulators
 
-        self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
+        self.n_clusters = len(self.adata.obs[annot].unique())
         
         self.layer = layer
         self.model = None
