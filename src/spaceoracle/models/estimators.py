@@ -152,7 +152,7 @@ class VisionEstimator(AbstractEstimator):
             database='CellChat', 
             species='mouse', 
             signaling_type=None
-        )
+        ).drop_duplicates()
         df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
 
 

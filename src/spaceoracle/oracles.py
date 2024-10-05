@@ -23,7 +23,7 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -341,7 +341,6 @@ class SpaceOracle(Oracle):
 
         return loaded_dict
     
-    
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names
@@ -369,7 +368,6 @@ class SpaceOracle(Oracle):
             regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
         )
 
-
     def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
@@ -390,7 +388,6 @@ class SpaceOracle(Oracle):
 
         return gene_gene_matrix
 
-
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
 
         genes = self.adata.var_names
@@ -405,7 +402,6 @@ class SpaceOracle(Oracle):
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
-
 
     def simulate_shift(self, perturb_condition={}, n_propagation=3):
         '''multi-gene level perturbation'''
@@ -495,11 +491,9 @@ class SpaceOracle(Oracle):
 
         return sp_maps
 
-
     def compute_betas(self):
         self.beta_dict = self._get_spatial_betas_dict()
         self.coef_matrix = self._get_co_betas()
-
 
     def _get_co_betas(self, alpha=1):
 
@@ -542,7 +536,6 @@ class SpaceOracle(Oracle):
         coef_matrix.columns = genes
 
         return coef_matrix
-
 
     def perturb_via_celloracle(self, gene_mtx, target, n_propagation=3):
         
