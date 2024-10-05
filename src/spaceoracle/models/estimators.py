@@ -147,6 +147,12 @@ class VisionEstimator(AbstractEstimator):
         else:
             self.regulators = regulators
 
+        self.lr = adata.uns['commot-user_database-info']['df_ligrec']
+        self.lr = self.lr[self.lr.ligand.isin(adata.var_names) & (self.lr.receptor.isin(adata.var_names))]
+        self.lr['pairs'] = self.lr.ligand.values + '-' + self.lr.receptor.values
+        self.ligands = self.lr.ligand.values
+        self.receptors = self.lr.receptor.values
+
         self.n_clusters = len(self.adata.obs[annot].unique())
         
         self.layer = layer

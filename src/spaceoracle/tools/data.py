@@ -7,13 +7,14 @@ import numpy as np
 from torch.utils.data import Dataset
 from ..models.spatial_map import xyc2spatial_fast
 from .network import DayThreeRegulatoryNetwork, GeneRegulatoryNetwork
-from ..tools.utils import deprecated
+from ..tools.utils import deprecated, gaussian_kernel_2d
 import torch
 import pandas as pd
 
 # Suppress ImplicitModificationWarning
 warnings.simplefilter(action='ignore', category=anndata.ImplicitModificationWarning)
 
+tt = lambda x: torch.from_numpy(x.copy()).float()
 
 class SpatialDataset(Dataset, ABC):
 
@@ -102,19 +103,19 @@ class SpaceOracleDataset(SpatialDataset):
             sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
         spatial_info = torch.from_numpy(sp_map.copy()).float()
         tf_exp = torch.from_numpy(self.X[index].copy()).float()
-        target_ene_exp = torch.from_numpy(self.y[index].copy()).float()
+        target_gene_exp = torch.from_numpy(self.y[index].copy()).float()
         cluster_info = torch.tensor(self.clusters[index]).long()
 
         assert spatial_info.shape[0] == self.n_clusters
         assert spatial_info.shape[1] == spatial_info.shape[2] == self.spatial_dim
 
-        return spatial_info, tf_exp, target_ene_exp, cluster_info
+        return spatial_info, tf_exp, target_gene_exp, cluster_info
 
 
 class LigRecDataset(SpaceOracleDataset):
     def __init__(
-            self, adata, target_gene, regulators, ligands, receptors, radius=30,
-            spatial_dim=16, annot='rctd_cluster', layer='imputed_count', rotate_maps=True
+            self, adata, target_gene, regulators, ligands, receptors, radius=200,
+            spatial_dim=32, annot='rctd_cluster', layer='imputed_count', rotate_maps=True
         ):
         super().__init__(adata, target_gene, regulators, spatial_dim=spatial_dim, 
                                 annot=annot, layer=layer, rotate_maps=rotate_maps)
@@ -122,54 +123,38 @@ class LigRecDataset(SpaceOracleDataset):
         self.receptors = receptors
         self.radius = radius
 
+        # sq.gr.spatial_neighbors(adata, n_neighs=neighbors)
+
+        self.xy = np.array(self.adata.obsm['spatial']).copy()
         self.ligX =  adata.to_df(layer=layer)[self.ligands].values
-        self.recX =  adata.to_df(layer=layer)[self.receptors].values
-        self.dist_matrix = self.compute_distances(adata.obsm['X_spatial'])
-        # max number of neighbors within radius
-        self.context = np.max([len(np.argwhere(arr < self.radius)) for arr in self.dist_matrix]) + 1
+        self.recpX =  adata.to_df(layer=layer)[self.receptors].values
 
-    def compute_distances(self, coords):
-        diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-        distances = np.sqrt(np.sum(diff**2, axis=-1))
-        return distances
-
-    def __getitem__(self, index):
-        sp_map = self.spatial_maps[index]
+    def _process_spatial(self, sp_map):
         if self.rotate_maps:
             k = np.random.choice([0, 1, 2, 3])
             sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
-        spatial_info = torch.from_numpy(sp_map.copy()).float()
-        tf_exp = torch.from_numpy(self.X[index].copy()).float()
-        target_gene_exp = torch.from_numpy(self.y[index].copy()).float()
+        return sp_map
+
+
+    def __getitem__(self, index):
+        sp_map = self.spatial_maps[index]
+        sp_map = self._process_spatial(sp_map)
+        sp_map = tt(sp_map)
+
+        w = gaussian_kernel_2d(self.xy[0], self.xy, radius=self.radius)
+
+        tf_exp = tt(self.X[index])
+
+        ligand_exp = (self.ligX.T*w).T
+        receptor_exp = self.recpX[index]
+
+        lr_exp = tt(ligand_exp * receptor_exp).mean(dim=0)
+        target_gene_exp = tt(self.y[index])
         cluster_info = torch.tensor(self.clusters[index]).long()
 
-        assert spatial_info.shape[0] == self.n_clusters
-        assert spatial_info.shape[1] == spatial_info.shape[2] == self.spatial_dim
+        assert sp_map.shape[0] == self.n_clusters
+        assert sp_map.shape[1] == sp_map.shape[2] == self.spatial_dim
 
-        arr = self.dist_matrix[index]
-        neighbors = np.argwhere((arr < self.radius) & (arr != 0))
-        nneighbors = len(neighbors)
-        
-        distances = arr[neighbors].reshape(-1)
-        pad_size = self.context - nneighbors
-        celltypes = self.clusters[neighbors].reshape(-1)
-        if len(neighbors) <= 0:
-            distX = np.zeros((pad_size))
-            ctX = np.zeros((pad_size))
-        else:
-            distX = np.concatenate([distances, np.zeros((pad_size))])
-            ctX = np.concatenate([celltypes, np.zeros((pad_size))])
+        x_exp = torch.cat([tf_exp, lr_exp], dim=0)
 
-        nligands = len(self.ligands)
-        ligX = self.ligX[neighbors]
-        ligX = ligX.reshape(nneighbors, nligands)
-        ligX = np.vstack([ligX, np.zeros((pad_size, ligX.shape[1]))])
-        
-        recX = self.recX[index]
-
-        tf_load = (spatial_info, tf_exp, target_gene_exp, cluster_info)
-        lr_load = ( torch.from_numpy(distX).float(), 
-                    torch.from_numpy(ctX).long(), 
-                    torch.from_numpy(ligX).float(), 
-                    torch.from_numpy(recX).float())
-        return tf_load, lr_load
+        return sp_map, x_exp, target_gene_exp, cluster_info
