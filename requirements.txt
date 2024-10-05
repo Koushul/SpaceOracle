@@ -16,7 +16,8 @@ pytest==8.3.2
 python_igraph==0.11.6
 scanpy==1.10.2
 scikit_learn==1.5.1
-scipy==1.14.0
+# scipy==1.14.0
+scipy==1.12
 # seaborn==0.13.2
 torch==2.4.0
 torchvision==0.19.0
@@ -24,4 +25,5 @@ tqdm==4.66.4
 pyarrow==17.0.0
 enlighten
 pyro-ppl
+commot
 # velocyto==0.17.17
