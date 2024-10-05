@@ -591,6 +591,8 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         # baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
         _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
 
+        print(f'{len(self.regulators)} regulators + {len(self.ligands)} ligands + {len(self.receptors)} receptors')
+
         if pbar is None:
             _manager = enlighten.get_manager()
             pbar = _manager.counter(
@@ -722,15 +724,17 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         recpX = adata.to_df(layer=self.layer)[self.receptors].values
 
         # Calculate weights using gaussian kernel
-        w = gaussian_kernel_2d(xy[0], xy, radius=self.radius)
+        lr_exp = []
+        for i in range(len(xy)):
+            w = gaussian_kernel_2d(xy[i], xy, radius=self.radius)
 
-        # Calculate ligand-receptor expression
-        ligand_exp = (ligX.T * w).T
-        receptor_exp = recpX
-        lr_exp = torch.from_numpy((ligand_exp * receptor_exp).mean(axis=0)).float()
+            ligand_exp = (ligX.T * w).T
+            receptor_exp = recpX[i]
+            lr_exp.append((ligand_exp * receptor_exp).mean(axis=0))
 
-        # Concatenate X with ligand-receptor expression
-        X = torch.cat([X, lr_exp.unsqueeze(0).repeat(X.shape[0], 1)], dim=1)
+        lr_exp = torch.from_numpy(np.stack(lr_exp, axis=0)).float()
+
+        X = torch.cat([X, lr_exp], dim=1)
 
         if cache_exists and cache:
             with open(beta_dists_file, 'rb') as f:
@@ -775,7 +779,7 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
 
         del X, y, cluster_labels
 
-        return
+        # return
 
         try:
             model, losses = self._build_model(
