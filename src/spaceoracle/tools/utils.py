@@ -1,3 +1,4 @@
+from numba import jit
 import numpy as np
 import torch
 import random
@@ -110,3 +111,27 @@ def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
+
+def clean_up_adata(adata, fields_to_keep):
+    current_obs_fields = adata.obs.columns.tolist()
+    excess_obs_fields = [field for field in current_obs_fields if field not in fields_to_keep]
+    for field in excess_obs_fields:
+        del adata.obs[field]
+    
+    current_var_fields = adata.var.columns.tolist()
+    excess_var_fields = [field for field in current_var_fields 
+        if field not in []]
+    for field in excess_var_fields:
+        del adata.var[field]
+
+    del adata.uns
+
+
+@jit
+def gaussian_kernel_2d(origin, xy_array, radius, eps=0.001):
+    distances = np.sqrt(np.sum((xy_array - origin)**2, axis=1))
+    sigma = radius / np.sqrt(-2 * np.log(eps))
+    weights = np.exp(-(distances**2) / (2 * sigma**2))
+    # weights[0] = 0
+    return weights

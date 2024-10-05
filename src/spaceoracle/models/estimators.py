@@ -12,6 +12,7 @@ import enlighten
 from numba import jit
 import torch.nn.functional as F
 import torch
+import commot as ct
 import torch.nn as nn
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset, random_split
@@ -147,6 +148,20 @@ class VisionEstimator(AbstractEstimator):
             self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
         else:
             self.regulators = regulators
+
+        df_ligrec = ct.pp.ligand_receptor_database(
+            database='CellChat', 
+            species='mouse', 
+            signaling_type=None
+        )
+        df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
+
+
+        self.lr = df_ligrec
+        self.lr = self.lr[self.lr.ligand.isin(adata.var_names) & (self.lr.receptor.isin(adata.var_names))]
+        self.lr['pairs'] = self.lr.ligand.values + '-' + self.lr.receptor.values
+        self.ligands = self.lr.ligand.values
+        self.receptors = self.lr.receptor.values
 
         self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
         

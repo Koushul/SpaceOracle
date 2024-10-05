@@ -10,6 +10,5 @@ Below is an example of the beta coefficients estimated by SpaceOracle:
 
 ![Beta Coefficients Example](./notebooks/beta_example.png)
 
-This image demonstrates the spatial variation in gene regulatory network (GRN) coefficients across different cell types or spatial regions.
 
 
