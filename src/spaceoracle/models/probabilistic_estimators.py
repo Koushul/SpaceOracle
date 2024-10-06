@@ -677,21 +677,28 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
     # So a marginal posterior distribution for a given IV that does not include 0 in the 95% HDI 
     # just shows that 95% of the most likely parameter values based on the data do not include zero. 
     
-    def test_significance(self, betas, alpha=0.05, effect_size_threshold=0.1):
+    # def test_significance(self, betas, alpha=0.05, effect_size_threshold=0.1):
+    #     lower_bound = np.percentile(betas, 100 * (alpha / 2), axis=0)
+    #     upper_bound = np.percentile(betas, 100 * (1 - alpha / 2), axis=0)
+        
+    #     # Test for Type I error (false positive)
+    #     significant_type1 = (lower_bound > 0) | (upper_bound < 0)
+        
+    #     # Test for Type II error (false negative)
+    #     mean_effect = np.mean(betas, axis=0)
+    #     significant_type2 = np.abs(mean_effect) > effect_size_threshold
+        
+    #     # Combine both tests
+    #     significant = significant_type1 & significant_type2
+        
+    #     return significant
+
+    def test_significance(self, betas, alpha=0.05):
         lower_bound = np.percentile(betas, 100 * (alpha / 2), axis=0)
         upper_bound = np.percentile(betas, 100 * (1 - alpha / 2), axis=0)
+        significant = (lower_bound > 0) | (upper_bound < 0)
         
-        # Test for Type I error (false positive)
-        significant_type1 = (lower_bound > 0) | (upper_bound < 0)
-        
-        # Test for Type II error (false negative)
-        mean_effect = np.mean(betas, axis=0)
-        significant_type2 = np.abs(mean_effect) > effect_size_threshold
-        
-        # Combine both tests
-        significant = significant_type1 & significant_type2
-        
-        return significant, significant_type1, significant_type2
+        return significant
 
 
 
