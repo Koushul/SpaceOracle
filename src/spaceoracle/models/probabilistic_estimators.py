@@ -32,6 +32,9 @@ from .pixel_attention import NicheAttentionNetwork
 from ..tools.data import LigRecDataset
 from ..tools.utils import gaussian_kernel_2d, set_seed, seed_worker
 
+import warnings
+warnings.filterwarnings("ignore", module="pyro")
+
 
 set_seed(42)
 

@@ -6,53 +6,25 @@ import scanpy as sc
 import spaceoracle
 import pickle
 
-
-# adata_train = sc.read_h5ad(
-#     '/ihome/ylee/kor11/space/SpaceOracle/notebooks/cache/adata_train.h5ad')
-
-# so = spaceoracle.SpaceOracle(
-#     adata=adata_train,
-#     annot='rctd_cluster', 
-#     max_epochs=5, 
-#     learning_rate=4e-4, 
-#     spatial_dim=64,
-#     batch_size=256,
-#     init_betas='co',
-#     rotate_maps=True,
-#     cluster_grn=True,
-#     regularize=True,
-# )
+from spaceoracle.oracles import SpaceOracle
+from spaceoracle.tools.network import MouseKidneyRegulatoryNetwork
 
 
-from utils import get_imputed
-from spaceoracle.tools.network import HumanLymphRegulatoryNetwork
+co_grn = MouseKidneyRegulatoryNetwork()
+adata = sc.read_h5ad('.cache/kidney_chip275_dim35')
+spatial_dim = 35 
 
-adata_train = sc.read_h5ad(
-    '../data/spaceranger/human-lymph-node-1-0-0-cleaned.h5ad')
-
-grn = HumanLymphRegulatoryNetwork(base_pth='/ix/djishnu/alw399/SpaceOracle/data/')
-
-del adata_train.obsm['spatial_maps']
-
-so = spaceoracle.SpaceOracle(
-    adata=adata_train,
+so = SpaceOracle(
+    adata=adata,
     annot='cluster', 
     max_epochs=5, 
-    learning_rate=4e-4, 
-    spatial_dim=64,
+    learning_rate=7e-4, 
+    spatial_dim=spatial_dim,
     batch_size=256,
-    init_betas='co',
     rotate_maps=True,
-    cluster_grn=True,
-    regularize=True,
-    co_grn=grn
+    alpha=0.4,
+    co_grn=co_grn
 )
 
-
 so.run()
-so.compute_betas()
-
-with open('beta_dict_visium.pickle', 'wb') as f:
-    pickle.dump(so.beta_dict, f)
-
 exit()
