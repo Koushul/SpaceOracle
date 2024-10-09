@@ -1,3 +1,4 @@
+from functools import partial
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -44,6 +45,7 @@ from .tools.utils import (
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
+
 
 
 class CPU_Unpickler(pickle.Unpickler):
@@ -270,6 +272,8 @@ class SpaceOracle(Oracle):
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
 
+
+
     
     def run(self):
 
@@ -407,7 +411,7 @@ class SpaceOracle(Oracle):
         return beta_dict
     
     def _get_lr_sp_maps(self):
-        print('warning! hard-coded radius=200')
+        # print('warning! hard-coded radius=200')
         sp_maps = []
         for index in range(self.adata.n_obs):
             w = gaussian_kernel_2d(
@@ -430,44 +434,74 @@ class SpaceOracle(Oracle):
 
         return gene_gene_matrix
 
-    def _perturb_single_cell(self, gene_mtx, gex_delta, cell_index, betas_dict):
+    def _perturb_single_cell(self, gene_mtx, gex_delta, betas_dict, cell_index):
 
         genes = self.adata.var_names
-        
+
         gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
         rec_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
         lig_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
 
+
         for i, gene in enumerate(genes):
+            
             _beta_out = betas_dict.get(gene, None)
             
             if _beta_out is not None:
-                # deal with betas
-                regs = _beta_out.regulators_index
-                ligs = self.lig_idxs
-                r = np.array(regs + ligs)
+                # regs = _beta_out.regulators_index
+                # ligs = self.lig_idxs
+                # r = np.array(regs + ligs)
+            
+                # gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+                
+                # # LR component
+                # recs = np.array(self.rec_idxs)
+                # ligs = np.array(self.lig_idxs)
+                # sp_map = self.lr_sp_maps[cell_index]
+
+                # # deal with lig constants for recs
+                # lig_expr = gene_mtx[:, ligs] 
+                # dydr = sp_map[:, np.newaxis] * lig_expr     # dydr without the betas (done earlier)
+                # dydr = np.mean(dydr, axis=0)
+                # rec_gene_matrix[recs, i] = dydr             # set every receptor to dydr constants
+
+                # gene_gene_matrix = gene_gene_matrix * rec_gene_matrix
+
+                # # deal with rec constants for ligs 
+                # rec_expr = gene_mtx[:, recs]
+                # dydl = np.mean(sp_map, axis=0)              # all ligands 
+                # lig_gene_matrix[ligs, i] = dydl
+
+                # gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
+
+                # print('old', gene_gene_matrix.sum()) 
+
+                # Optimized code:
+                regs = np.array(_beta_out.regulators_index)
+                ligs = np.array(self.lig_idxs)
+                r = np.concatenate((regs, ligs))
             
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
                 
-                # RL component
+                # LR component
                 recs = np.array(self.rec_idxs)
-                ligs = np.array(self.lig_idxs)
                 sp_map = self.lr_sp_maps[cell_index]
 
-                # deal with lig constants for recs
-                lig_expr = gene_mtx[:, ligs] 
-                dydr = sp_map[:, np.newaxis] * lig_expr     # dydr without the betas (done earlier)
-                dydr = np.mean(dydr, axis=0)
-                rec_gene_matrix[recs, i] = dydr             # set every receptor to dydr constants
+                # Precompute common values
+                lig_expr = gene_mtx[:, ligs]
+                dydr = np.mean(sp_map[:, np.newaxis] * lig_expr, axis=0)
+                dydl = np.mean(sp_map)
 
-                gene_gene_matrix = gene_gene_matrix * rec_gene_matrix
-
-                # deal with rec constants for ligs 
-                rec_expr = gene_mtx[:, recs]
-                dydl = np.mean(sp_map, axis=0)              # all ligands 
+                # Update matrices efficiently
+                rec_gene_matrix[recs, i] = dydr
                 lig_gene_matrix[ligs, i] = dydl
 
-                gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
+                # Combine all effects
+                gene_gene_matrix[:, i] *= rec_gene_matrix[:, i] * lig_gene_matrix[:, i]
+
+                # print('new', gene_gene_matrix.sum()) ##check if results are the same
+
+
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
@@ -513,11 +547,21 @@ class SpaceOracle(Oracle):
         if self.lr_sp_maps is None:
             self.lr_sp_maps = self._get_lr_sp_maps()
 
+        f = lambda x: self._perturb_single_cell(gene_mtx, delta_simulated, self.beta_dict, x)
+
         for n in range(n_propagation):
 
+            from pqdm.threads import pqdm
+            obs = list(range(self.adata.n_obs))
+
             _simulated = np.array(
-                [self._perturb_single_cell(gene_mtx, delta_simulated, i, self.beta_dict) 
-                    for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
+                pqdm(
+                    obs,
+                    f,
+                    n_jobs=10,
+                )
+            )
+
 
             delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
