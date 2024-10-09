@@ -13,7 +13,7 @@ import torch
 from dataclasses import dataclass
 from typing import List
 from tqdm import tqdm
-from multiprocessing import Pool
+from pqdm.processes import pqdm
 import os
 import datetime
 import re
@@ -435,7 +435,8 @@ class SpaceOracle(Oracle):
         genes = self.adata.var_names
         
         gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
-        lr_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
+        rec_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
+        lig_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
 
         for i, gene in enumerate(genes):
             _beta_out = betas_dict.get(gene, None)
@@ -448,18 +449,25 @@ class SpaceOracle(Oracle):
             
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
                 
-                # deal with rec/lig constants
+                # RL component
                 recs = np.array(self.rec_idxs)
-                rec_expr = gene_mtx[:, recs]
                 ligs = np.array(self.lig_idxs)
-                lig_expr = gene_mtx[:, ligs] 
-
                 sp_map = self.lr_sp_maps[cell_index]
-                lig_expr = lig_expr * sp_map[:, np.newaxis]
-                lr_expr = np.mean((lig_expr * rec_expr), axis=0)
 
-                lr_gene_matrix[ligs, i] = lr_expr
-                gene_gene_matrix = gene_gene_matrix * lr_gene_matrix
+                # deal with lig constants for recs
+                lig_expr = gene_mtx[:, ligs] 
+                dydr = sp_map[:, np.newaxis] * lig_expr     # dydr without the betas (done earlier)
+                dydr = np.mean(dydr, axis=0)
+                rec_gene_matrix[recs, i] = dydr             # set every receptor to dydr constants
+
+                gene_gene_matrix = gene_gene_matrix * rec_gene_matrix
+
+                # deal with rec constants for ligs 
+                rec_expr = gene_mtx[:, recs]
+                dydl = np.mean(sp_map, axis=0)              # all ligands 
+                lig_gene_matrix[ligs, i] = dydl
+
+                gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
@@ -507,15 +515,9 @@ class SpaceOracle(Oracle):
 
         for n in range(n_propagation):
 
-            args = [(gene_mtx, delta_simulated, i, self.beta_dict) for i in range(self.adata.n_obs)]
-
-            with Pool(processes=n_jobs) as pool:
-                results = list(tqdm(pool.starmap(self._perturb_single_cell, args), 
-                                    total=len(args), desc=f'Running simulation {n+1}/{n_propagation}'))
-
-            # _simulated = np.array(
-            #     [self._perturb_single_cell(gene_mtx, delta_simulated, i, self.beta_dict) 
-            #         for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
+            _simulated = np.array(
+                [self._perturb_single_cell(gene_mtx, delta_simulated, i, self.beta_dict) 
+                    for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
 
             delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
