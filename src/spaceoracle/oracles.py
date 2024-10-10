@@ -1,3 +1,4 @@
+from functools import partial
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -13,6 +14,7 @@ import torch
 from dataclasses import dataclass
 from typing import List
 from tqdm import tqdm
+from pqdm.processes import pqdm
 import os
 import datetime
 import re
@@ -22,9 +24,12 @@ import io
 from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
+import commot as ct
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
 
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
+
+from .tools.utils import gaussian_kernel_2d
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
@@ -40,6 +45,7 @@ from .tools.utils import (
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
+
 
 
 class CPU_Unpickler(pickle.Unpickler):
@@ -59,11 +65,24 @@ class Oracle(ABC):
         self.pcs = None
         
         if 'imputed_count' not in self.adata.layers:
+            self.pca = self.get_PCA(self.adata)
             self.pcs = self.perform_PCA(self.adata)
             self.knn_imputation(self.adata, self.pcs)
 
 
-    ## canibalized from CellOracle
+    @staticmethod
+    def get_PCA(adata, n_components=None, div_by_std=False):
+        X = _adata_to_matrix(adata, "normalized_count")
+
+        pca = PCA(n_components=n_components)
+        if div_by_std:
+            pca.fit(X.T / X.std(0))
+        else:
+            pca.fit(X.T)
+
+        return pca
+
+    ## cannibalized from CellOracle
     @staticmethod
     def perform_PCA(adata, n_components=None, div_by_std=False):
         X = _adata_to_matrix(adata, "normalized_count")
@@ -76,7 +95,7 @@ class Oracle(ABC):
 
         return pcs
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=None, maximum=False,
@@ -93,7 +112,6 @@ class Oracle(ABC):
             b_sight = int(k * 8)
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
-
 
         space = pcs[:, :n_pca_dims]
 
@@ -123,7 +141,6 @@ class BetaOutput:
     target_gene: str
     target_gene_index: int
     regulators_index: List[int]
-
 
 class OracleQueue:
 
@@ -194,17 +211,36 @@ class OracleQueue:
         match = re.search(r'([^/]+)\.lock$', path)
         return match.group(1) if match else None
 
-
-
-
 class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05):
+    layer='imputed_count', alpha=0.05, co_grn=None):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        
+        if co_grn == None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = co_grn
+        
+        df_ligrec = ct.pp.ligand_receptor_database(
+            database='CellChat', 
+            species='mouse', 
+            signaling_type=None
+        ).drop_duplicates()
+        df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
+
+        self.lr = df_ligrec
+        self.lr = self.lr[self.lr.ligand.isin(adata.var_names) & (self.lr.receptor.isin(adata.var_names))]
+        self.lr['pairs'] = self.lr.ligand.values + '-' + self.lr.receptor.values
+        self.ligands = self.lr.ligand.values
+        self.receptors = self.lr.receptor.values
+        self.n_clusters = len(self.adata.obs[annot].unique())
+
+        self.lig_idxs = [list(self.adata.var_names).index(l) for l in self.ligands]
+        self.rec_idxs = [list(self.adata.var_names).index(r) for r in self.receptors]
+
         self.save_dir = save_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
@@ -218,7 +254,9 @@ class SpaceOracle(Oracle):
         self.layer = layer
         self.alpha = alpha
 
+        self.significance_dict = None
         self.beta_dict = None
+        self.lr_sp_maps = None
         self.coef_matrix = None
 
         if 'spatial_maps' not in self.adata.obsm:
@@ -234,6 +272,8 @@ class SpaceOracle(Oracle):
 
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
+
+
 
     
     def run(self):
@@ -265,8 +305,12 @@ class SpaceOracle(Oracle):
             # estimator = PixelAttention(
             #     self.adata, target_gene=gene, layer=self.layer)
 
-            estimator = ProbabilisticPixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
+            # estimator = ProbabilisticPixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
+
+            estimator = ProbabilisticPixelModulators(
+                self.adata, target_gene=gene, layer=self.layer,
+                annot=self.annot, co_grn=self.grn)
             
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -305,7 +349,7 @@ class SpaceOracle(Oracle):
                             'beta_dists': beta_dists,
                             'is_real': is_real,
                         }, 
-                        f
+                        
                     )
                     self.trained_genes.append(target_gene)
                     self.queue.delete_lock(gene)
@@ -317,23 +361,101 @@ class SpaceOracle(Oracle):
             train_bar.count = 0
             train_bar.start = time.time()
 
+    def load_significance_dict(self):
+        significance_dict = {}
+
+        for gene in tqdm(self.queue.completed_genes, desc='loading significant dfs'):
+            with open(f'{self.save_dir}/{gene}_estimator.pkl', 'rb') as f:
+                loaded_dict =  CPU_Unpickler(f).load()
+            significance_dict[gene] = loaded_dict['is_real']
+        
+        self.significance_dict = significance_dict
+        return significance_dict
+    
+    def show_significant_links(self, goi, celltype_labels=None):
+        import seaborn as sns 
+
+        is_real = self.significance_dict[goi]
+        sig_df = is_real.loc[is_real.sum(1) > 0]
+        if celltype_labels != None:
+            sig_df.rename(columns=celltype_labels, inplace=True)
+        sns.heatmap(
+            sig_df, cmap='viridis', yticklabels=True, xticklabels=True, 
+            linewidths=0.5, linecolor='black', cbar=False)
+
+
+    def plot_beta_effect(self, goi, roi=None, coi=None):
+        '''
+        goi: target gene of interest
+        roi: regulator of interest
+        lroi: ligand-receptor pair of interest
+        coi: cell type of interest
+        '''
+        from collections import defaultdict
+        import plotly.express as px
+
+        def separate_betas(goi):
+            n_regulators = len(self.beta_dict[goi].regulators)
+            n_ligands = len(self.lr['pairs'])
+            reg_betas = self.beta_dict[goi].betas[:, 1:n_regulators+1]
+            lr_betas = self.beta_dict[goi].betas[:, -n_ligands:]
+            return reg_betas, lr_betas
+
+        reg_betas, lr_betas = separate_betas(goi)
+        if roi in self.lr['pairs']:
+            roi_idx = self.lr['pairs'].index(roi)
+            roi_effect = lr_betas.T[roi_idx]
+        else:
+            roi_idx = self.beta_dict[goi].regulators.index(roi)
+            roi_effect = reg_betas.T[roi_idx]
+
+        adata = self.adata
+        if coi != None:
+            mask = adata.obs[self.annot] == coi
+        else:
+            mask = [True] * adata.shape[0]
+        adata = adata[mask]
+
+        X = adata.obsm['spatial'][:, 0]
+        Y = adata.obsm['spatial'][:, 1]
+        Z = []
+
+        occurrence = defaultdict(int)
+        for x, y in zip(X, Y):
+            height = occurrence[(x,y)]
+            occurrence[(x,y)] += 1
+            Z.append(height)
+
+        fig = px.scatter_3d(
+            x=X, y=Y, z=Z,
+            color=roi_effect[mask],
+            color_continuous_scale='Plotly3'
+            )
+
+        fig.update_traces(
+            marker=dict(size=2), 
+            line=dict(width=2, color='black')
+            )
+
+        fig.show()
+
+
     @staticmethod
-    def load_estimator(gene, spatial_dim, nclusters, save_dir):
+    def load_estimator(gene, ligands, spatial_dim, nclusters, save_dir):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
             loaded_dict =  CPU_Unpickler(f).load()
 
             model = NicheAttentionNetwork(
-                len(loaded_dict['regulators']), 
-                nclusters, 
-                spatial_dim
+                n_regulators=len(loaded_dict['regulators'])+len(ligands), 
+                in_channels=nclusters, 
+                spatial_dim=spatial_dim
             )
             model.load_state_dict(loaded_dict['model'])
 
             loaded_dict['model'] = model
 
         return loaded_dict
-    
-    
+
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names
@@ -341,7 +463,7 @@ class SpaceOracle(Oracle):
         assert 'spatial_maps' in adata.obsm.keys()
         nclusters = len(np.unique(adata.obs[self.annot]))
 
-        estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
+        estimator_dict = self.load_estimator(target_gene, self.ligands, self.spatial_dim, nclusters, self.save_dir)        
         estimator_dict['model'].to(device).eval()
         beta_dists = estimator_dict.get('beta_dists', None)
 
@@ -361,45 +483,131 @@ class SpaceOracle(Oracle):
             regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
         )
 
-
     def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
+
+
     
+    def _get_lr_sp_maps(self):
+        # print('warning! hard-coded radius=200')
+        sp_maps = []
+        for index in range(self.adata.n_obs):
+            w = gaussian_kernel_2d(
+                self.adata.obsm['spatial'][index], self.adata.obsm['spatial'], radius=200)
+            sp_maps.append(w)
+        sp_maps = np.array(sp_maps) # (cell, cell)
+        return sp_maps
+
     def _get_gene_gene_matrix(self, cell_index):
         genes = self.adata.var_names
         gene_gene_matrix = np.zeros((len(genes), len(genes)))
 
         for i, gene in enumerate(genes):
             _beta_out = self.beta_dict.get(gene, None)
-            
+
             if _beta_out is not None:
                 r = np.array(_beta_out.regulators_index)
+
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
         return gene_gene_matrix
 
-
-    def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
+    def _perturb_single_cell(self, gene_mtx, gex_delta, betas_dict, cell_index):
 
         genes = self.adata.var_names
-        
+
         gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
+        rec_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
+        lig_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
+
 
         for i, gene in enumerate(genes):
+            
             _beta_out = betas_dict.get(gene, None)
             
             if _beta_out is not None:
-                r = np.array(_beta_out.regulators_index)
+                # regs = _beta_out.regulators_index
+                # ligs = self.lig_idxs
+                # r = np.array(regs + ligs)
+            
+                # gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+                
+                # # LR component
+                # recs = np.array(self.rec_idxs)
+                # ligs = np.array(self.lig_idxs)
+                # sp_map = self.lr_sp_maps[cell_index]
+
+                # # deal with lig constants for recs
+                # lig_expr = gene_mtx[:, ligs] 
+                # dydr = sp_map[:, np.newaxis] * lig_expr     # dydr without the betas (done earlier)
+                # dydr = np.mean(dydr, axis=0)
+                # rec_gene_matrix[recs, i] = dydr             # set every receptor to dydr constants
+
+                # gene_gene_matrix = gene_gene_matrix * rec_gene_matrix
+
+                # # deal with rec constants for ligs 
+                # rec_expr = gene_mtx[:, recs]
+                # dydl = np.mean(sp_map, axis=0)              # all ligands 
+                # dydl = rec_expr * dydl
+                # lig_gene_matrix[ligs, i] = dydl
+
+                # gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
+
+                # print('old', gene_gene_matrix.sum()) 
+
+                # Optimized code:
+                regs = np.array(_beta_out.regulators_index)
+                ligs = np.array(self.lig_idxs)
+                r = np.concatenate((regs, ligs))
+            
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+                
+                # LR component
+                recs = np.array(self.rec_idxs)
+                sp_map = self.lr_sp_maps[cell_index]
+
+                # Precompute common values
+                lig_expr = gene_mtx[:, ligs]
+                dydr = np.mean(sp_map[:, np.newaxis] * lig_expr, axis=0)
+                dydl = np.mean(sp_map) * rec_expr
+
+                # Update matrices efficiently
+                rec_gene_matrix[recs, i] = dydr
+                lig_gene_matrix[ligs, i] = dydl
+
+                # Combine all effects
+                gene_gene_matrix[:, i] *= rec_gene_matrix[:, i] * lig_gene_matrix[:, i]
+
+                # print('new', gene_gene_matrix.sum()) ##check if results are the same
+
+
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
+    def simulate_shift(self, perturb_condition={}, n_propagation=3, n_jobs=1):
+        '''multi-gene level perturbation'''
 
+        gene_mtx = self.adata.layers['imputed_count']
+        simulation_input = gene_mtx.copy()
+
+        for gene, gex in perturb_condition.items():
+            target_index = self.gene2index[gene]
+            simulation_input[:, target_index] = gex
+        
+        delta_input = simulation_input - gene_mtx
+        delta_simulated = delta_input.copy()
+
+        gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation, n_jobs=n_jobs) 
+        self.adata.layers['perturbed_so'] = gem_simulated
+        self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
+    
     def perturb(self, gene_mtx, target, n_propagation=3):
+        '''single gene knock-out'''
+
         assert target in self.adata.var_names
 
         target_index = self.gene2index[target]  
@@ -409,13 +617,35 @@ class SpaceOracle(Oracle):
         delta_input = simulation_input - gene_mtx # get delta X
         delta_simulated = delta_input.copy() 
 
+        gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation)
+        return gem_simulated
+
+    def do_simulation(self, gene_mtx, delta_input, delta_simulated, n_propagation, n_jobs=1):
+        '''perturb helper function'''
+
         if self.beta_dict is None:
+            print('Assembling beta_dict')
             self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
         
+        if self.lr_sp_maps is None:
+            self.lr_sp_maps = self._get_lr_sp_maps()
+
+        f = lambda x: self._perturb_single_cell(gene_mtx, delta_simulated, self.beta_dict, x)
+
         for n in range(n_propagation):
+
+            from pqdm.threads import pqdm
+            obs = list(range(self.adata.n_obs))
+
             _simulated = np.array(
-                [self._perturb_single_cell(delta_simulated, i, self.beta_dict) 
-                    for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
+                pqdm(
+                    obs,
+                    f,
+                    n_jobs=10,
+                )
+            )
+
+
             delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
 
@@ -428,7 +658,6 @@ class SpaceOracle(Oracle):
         assert gem_simulated.shape == gene_mtx.shape
 
         return gem_simulated
-
 
     @staticmethod
     def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False, method='fast'):
@@ -463,11 +692,9 @@ class SpaceOracle(Oracle):
 
         return sp_maps
 
-
     def compute_betas(self):
         self.beta_dict = self._get_spatial_betas_dict()
         self.coef_matrix = self._get_co_betas()
-
 
     def _get_co_betas(self, alpha=1):
 
@@ -511,7 +738,6 @@ class SpaceOracle(Oracle):
 
         return coef_matrix
 
-
     def perturb_via_celloracle(self, gene_mtx, target, n_propagation=3):
         
         target_index = self.gene2index[target]  
@@ -534,45 +760,3 @@ class SpaceOracle(Oracle):
         gem_simulated = gene_mtx + delta_simulated
 
         return gem_simulated
-
-
-
-# def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
-#     """Calculate a nearest neighbour distance matrix
-
-#     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
-#     To achieve that we call kneighbors_graph with X = None
-#     """
-#     if metric == "correlation":
-#         nn = NearestNeighbors(
-#             n_neighbors=k, metric="correlation", 
-#             algorithm="brute", n_jobs=n_jobs)
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-#     else:
-#         nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-
-
-# def connectivity_to_weights(mknn, axis=1):
-#     if type(mknn) is not sparse.csr_matrix:
-#         mknn = mknn.tocsr()
-#     return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
-
-# def convolve_by_sparse_weights(data, w):
-#     w_ = w.T
-#     assert np.allclose(w_.sum(0), 1)
-#     return sparse.csr_matrix.dot(data, w_)
-
-
-# def _adata_to_matrix(adata, layer_name, transpose=True):
-#     if isinstance(adata.layers[layer_name], np.ndarray):
-#         matrix = adata.layers[layer_name].copy()
-#     else:
-#         matrix = adata.layers[layer_name].todense().A.copy()
-
-#     if transpose:
-#         matrix = matrix.transpose()
-
-#     return matrix.copy(order="C")

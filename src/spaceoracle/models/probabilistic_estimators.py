@@ -19,6 +19,9 @@ from sklearn.model_selection import train_test_split
 import copy
 import os
 import pickle
+from collections import defaultdict
+from torch.utils.data import DataLoader, TensorDataset, random_split
+
 
 from joblib import Parallel, delayed
 
@@ -26,7 +29,11 @@ from spaceoracle.models.spatial_map import xyc2spatial_fast
 from spaceoracle.models.estimators import VisionEstimator, AbstractEstimator
 from spaceoracle.tools.data import LigRecDataset
 from .pixel_attention import NicheAttentionNetwork
+from ..tools.data import LigRecDataset
 from ..tools.utils import gaussian_kernel_2d, set_seed, seed_worker
+
+import warnings
+warnings.filterwarnings("ignore", module="pyro")
 
 
 set_seed(42)
@@ -858,3 +865,332 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             beta_list.extend(betas.cpu().numpy())
         
         return np.array(beta_list)
+
+class ReceptorNN(nn.Module):
+    def __init__(self, num_celltypes, embedding_dim=10):
+        super(ReceptorNN, self).__init__()
+        self.celltype_embedding = nn.Embedding(num_celltypes, embedding_dim)
+        self.fc1 = nn.Linear(embedding_dim+1, 16)  # embedding_dim for cell type + 1 for distance
+        self.fc2 = nn.Linear(16, 8)
+        self.fc3 = nn.Linear(8, 1)
+        
+    def forward(self, distance, ct):
+        celltype_embed = self.celltype_embedding(ct.squeeze())
+        x = torch.cat((distance.unsqueeze(-1), celltype_embed), dim=-1)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        output = self.fc3(x)
+        return output
+
+class ProbabilisticPixelAttentionLR(ProbabilisticPixelAttention):
+    def __init__(self, adata, target_gene, grn=None, lrn=None, regulators=None, layer='imputed_count', annot='cluster'):
+        super().__init__(adata, target_gene, co_grn=grn, regulators=regulators, layer=layer, annot='cluster')
+        self.ligrec_net = lrn
+        self.ligands = self.ligrec_net.gl_dict.get(target_gene, [])
+        self.ligand_affected = len(self.ligands)
+        if self.ligand_affected:
+            self.receptor_beta_dicts = self.build_lr_model(self.ligands, lrn.lr_dict)
+            self.receptors = sorted(self.receptor_beta_dicts.keys()) # ensure same order as dataloader
+
+    def build_lr_model(self, ligands, lr_dict, embed_dim=5):
+        # reverse dictionary, get the ligands that affect each receptor
+        rl_dict = defaultdict(list)
+        for idx, ligand in enumerate(ligands):
+            receptors = lr_dict[ligand]
+            for receptor in receptors:
+                if ligand not in rl_dict[receptor]:
+                    rl_dict[receptor].append(idx)
+        self.rl_dict = rl_dict
+
+        # each receptor learns beta that is a function of its ligands
+        receptor_beta_dicts = {
+            rec: ReceptorNN(self.n_clusters, embed_dim).to(device) for rec, rec_ligs in rl_dict.items()}
+
+        return receptor_beta_dicts
+
+    def predict_y_from_tfs(self, model, betas, batch_labels, inputs_x, anchors):
+        assert inputs_x.shape[1] == len(self.regulators) == model.dim-1
+        assert betas.shape[1] == len(self.regulators)+1
+
+        if anchors is None:
+            anchors = np.stack(
+                [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
+                axis=0
+            )
+        
+        anchors = torch.from_numpy(anchors).float().to(device)
+        inputs_x = inputs_x.to(device)
+        
+        y_pred = anchors[:, 0]*betas[:, 0]
+         
+        for w in range(model.dim-1):
+            y_pred += anchors[:, w+1]*betas[:, w+1]*inputs_x[:, w]
+
+        return y_pred
+
+    def predict_y_from_lrs(self, dists, cts, ligs, recs):
+        # also need to create add coef aka beta_0
+        ligs = ligs.to(device)
+        recs = recs.to(device)
+        cts = cts.to(device).unsqueeze(-1)
+        dists = dists.to(device)
+        batch_y = []
+        for i, rec in enumerate(self.receptors):
+            rl_model = self.receptor_beta_dicts[rec]
+            rec_ligs = ligs[:, :, self.rl_dict[rec]]         
+            rbeta = rl_model(dists, cts)
+            rbeta = rbeta * rec_ligs
+            rbeta = torch.sum(rbeta, axis=1)  # sum over neighbors
+            rbeta = torch.sum(rbeta, axis=1) # sum over ligands targeting receptor
+            batch_r = rbeta * recs[:, i]
+            batch_y.append(batch_r)
+            
+        batch_y = torch.stack(batch_y, dim=0)
+        y_pred = torch.sum(batch_y, axis=0) 
+        return y_pred # batch,
+
+
+    def predict_y(self, model, betas, batch_labels, inputs_x,
+                   dists, batch_cts, ligs, recs, anchors=None, lambd=0.2):
+        y_tf = self.predict_y_from_tfs(model, betas, batch_labels, inputs_x, anchors)
+        if not self.ligand_affected:
+            return y_tf
+        
+        y_lr = self.predict_y_from_lrs(dists, batch_cts, ligs, recs)
+        return y_tf*(1-lambd) + y_lr*(lambd)
+
+    @torch.no_grad()
+    def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, beta_dists=None, layer=None):
+
+        dataloader = self._build_dataloaders_from_adata(
+            self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=1024, 
+                mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
+
+        tf_beta_list = []
+        rec_beta_list = []
+        
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
+
+            # get TF betas 
+            # NEED TO FIX THIS (use anchors)
+            tf_betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            tf_beta_list.extend(tf_betas.cpu().numpy())
+
+            # get receptor betas from ligands
+            ligs = batch_ligs.to(device)
+            recs = batch_recs.to(device)
+            batch_y = []
+
+            batch_rbetas = []
+
+            for i, rec in enumerate(self.receptors):
+                rl_model = self.receptor_beta_dicts[rec]
+                rec_ligs = ligs[:, :, self.rl_dict[rec]]         
+                rbeta = rl_model(batch_dists.to(device), batch_cts.to(device))
+                rbeta = rbeta * rec_ligs
+                rbeta = torch.sum(rbeta, axis=1)  # sum over neighbors
+                rbeta = torch.sum(rbeta, axis=1) # sum over ligands targeting receptor
+                batch_rbetas.append(rbeta)
+            
+            batch_rbetas = torch.stack(batch_rbetas,dim=-1)
+            rec_beta_list.append(batch_rbetas)
+        
+        return torch.tensor(tf_beta_list), torch.vstack(rec_beta_list)
+
+
+    def _training_loop(self, model, dataloader, criterion, optimizer):
+        model.train()
+        total_loss = 0
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
+            optimizer.zero_grad()
+            betas = model(batch_spatial.to(device), batch_labels.to(device))
+            # if self.cluster_grn:
+            #     betas = self._mask_betas(betas, batch_labels)
+            anchors = np.stack(
+                [self.beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
+                axis=0
+            )
+
+            y_pred = self.predict_y(model, betas, batch_labels, batch_x, 
+                                    batch_dists, batch_cts, batch_ligs, batch_recs, anchors)
+            
+            loss = criterion(y_pred.squeeze(), batch_y.to(device).squeeze())
+            loss += 1e-3*((betas.mean(0) - torch.from_numpy(anchors).float().mean(0).to(device))**2).sum()
+            
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+                    
+        return total_loss / len(dataloader)
+
+    @torch.no_grad()
+    def _validation_loop(self, model, dataloader, criterion, cluster_grn = False):
+        model.eval()
+        total_loss = 0
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
+
+            betas = model(batch_spatial.to(device), batch_labels.to(device))
+            
+            # if cluster_grn:
+            #     betas = self._mask_betas(betas, batch_labels)
+            
+            outputs = self.predict_y(model, betas, batch_labels, batch_x, 
+                                    batch_dists, batch_cts, batch_ligs, batch_recs, anchors=None)
+            loss = criterion(outputs.squeeze(), batch_y.to(device).squeeze())
+            total_loss += loss.item()
+        
+        return total_loss / len(dataloader)
+    
+    @torch.no_grad()
+    def get_preds(self):
+        dataloader = self._build_dataloaders_from_adata(
+            self.adata, self.target_gene, self.regulators, self.ligands, self.receptors, batch_size=32, 
+            mode='infer', rotate_maps=False, annot=self.annot, layer=self.layer, spatial_dim=self.spatial_dim)
+
+        y_truths = []
+        y_preds = []
+        for tf_load, lr_load in dataloader:
+            batch_spatial, batch_x, batch_y, batch_labels = tf_load 
+            batch_dists, batch_cts, batch_ligs, batch_recs = lr_load
+
+            betas = self.model(batch_spatial.to(device), batch_labels.to(device))
+            outputs = self.predict_y(
+                        self.model, betas, batch_labels, batch_x, 
+                        batch_dists, batch_cts, batch_ligs, batch_recs, anchors=None)
+            y_truths.extend(batch_y)
+            y_preds.extend(outputs.flatten())
+        
+        return torch.tensor(y_truths), torch.tensor(y_preds)
+
+    def _build_model(
+        self,
+        adata,
+        annot,
+        spatial_dim,
+        mode,
+        layer,
+        max_epochs,
+        batch_size,
+        learning_rate,
+        rotate_maps,
+        cluster_grn=True,
+        regularize=False,
+        pbar=None
+        ):
+
+        train_dataloader, valid_dataloader = self._build_dataloaders_from_adata(
+            adata, self.target_gene, self.regulators, self.ligands, self.receptors,
+            mode=mode, rotate_maps=rotate_maps, 
+            batch_size=batch_size, annot=annot, 
+            layer=layer,
+            spatial_dim=spatial_dim
+        )
+
+        model = NicheAttentionNetwork(
+            n_regulators=len(self.regulators),
+            in_channels=self.n_clusters,
+            spatial_dim=spatial_dim,
+        )
+
+
+        model.to(device)
+
+        criterion = nn.MSELoss(reduction='mean')
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+        losses = []
+        best_model = copy.deepcopy(model)
+        best_score = np.inf
+        best_iter = 0
+    
+        _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
+
+        if pbar is None:
+            _manager = enlighten.get_manager()
+            pbar = _manager.counter(
+                total=max_epochs, 
+                desc=f'{_prefix} <> MSE: ...', 
+                unit='epochs'
+            )
+            pbar.refresh()
+
+            
+        for epoch in range(max_epochs):
+            training_loss = self._training_loop(
+                model, train_dataloader, criterion, optimizer)
+            validation_loss = self._validation_loop(
+                model, valid_dataloader, criterion)
+            
+            losses.append(validation_loss)
+
+            if validation_loss < best_score:
+                best_score = validation_loss
+                best_model = copy.deepcopy(model)
+                best_iter = epoch
+            
+            pbar.desc = f'{_prefix} <> MSE: {np.mean(losses):.4g}'
+            pbar.update()
+            
+        best_model.eval()
+        
+        return best_model, losses
+
+
+    @staticmethod
+    def _build_dataloaders_from_adata(adata, target_gene, regulators, ligands, receptors, batch_size=32, 
+    mode='train', rotate_maps=True, annot='rctd_cluster', layer='imputed_count', spatial_dim=64, test_size=0.2):
+
+        assert mode in ['train', 'train_test', 'infer']
+        set_seed(42)
+
+        xy = adata.obsm['spatial']
+        labels = np.array(adata.obs[annot])
+    
+        g = torch.Generator()
+        g.manual_seed(42)
+        
+        params = {
+            'batch_size': batch_size,
+            'worker_init_fn': seed_worker,
+            'generator': g,
+            'pin_memory': False,
+            'num_workers': 0,
+            'drop_last': True,
+        }
+        
+        dataset = LigRecDataset(
+            adata.copy(), 
+            target_gene=target_gene, 
+            regulators=regulators, 
+            ligands=ligands,
+            receptors=receptors,
+            annot=annot, 
+            layer=layer,
+            spatial_dim=spatial_dim,
+            rotate_maps=rotate_maps
+        )
+
+        if mode == 'infer':
+            params['drop_last'] = False
+            dataloader = DataLoader(dataset, shuffle=False, **params)
+            return dataloader
+
+        if mode == 'train':
+            train_dataloader = DataLoader(dataset, shuffle=True, **params)
+            valid_dataloader = DataLoader(dataset, shuffle=False, **params)
+            return train_dataloader, valid_dataloader
+        
+        if mode == 'train_test':
+            split = int((1-test_size)*len(dataset))
+            generator = torch.Generator().manual_seed(42)
+            train_dataset, valid_dataset = random_split(
+                dataset, [split, len(dataset)-split], generator=generator)
+            train_dataloader = DataLoader(train_dataset, shuffle=True, **params)
+            valid_dataloader = DataLoader(valid_dataset, shuffle=False, **params)
+            return train_dataloader, valid_dataloader

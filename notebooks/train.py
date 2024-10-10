@@ -4,25 +4,27 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import scanpy as sc
 import spaceoracle
-import pyro
+import pickle
 
-pyro.clear_param_store()
+from spaceoracle.oracles import SpaceOracle
+from spaceoracle.tools.network import MouseKidneyRegulatoryNetwork
 
-adata_train = sc.read_h5ad(
-    '/ihome/ylee/kor11/space/SpaceOracle/notebooks/cache/adata_train.h5ad')
 
-del adata_train.obsm['spatial_maps']
+co_grn = MouseKidneyRegulatoryNetwork()
+adata = sc.read_h5ad('.cache/kidney_chip275_dim35')
+spatial_dim = 35 
 
-so = spaceoracle.SpaceOracle(
-    adata=adata_train,
-    annot='rctd_cluster', 
-    max_epochs=10, 
+so = SpaceOracle(
+    adata=adata,
+    annot='cluster', 
+    max_epochs=5, 
     learning_rate=7e-4, 
-    spatial_dim=64,
-    batch_size=512,
-    alpha=0.1,
+    spatial_dim=spatial_dim,
+    batch_size=256,
+    rotate_maps=True,
+    alpha=0.4,
+    co_grn=co_grn
 )
 
 so.run()
-
 exit()
