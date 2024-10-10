@@ -252,6 +252,7 @@ class SpaceOracle(Oracle):
         self.layer = layer
         self.alpha = alpha
 
+        self.significance_dict = None
         self.beta_dict = None
         self.lr_sp_maps = None
         self.coef_matrix = None
@@ -356,6 +357,85 @@ class SpaceOracle(Oracle):
             train_bar.count = 0
             train_bar.start = time.time()
 
+    def load_significance_dict(self):
+        significance_dict = {}
+
+        for gene in tqdm(self.queue.completed_genes, desc='loading significant dfs'):
+            with open(f'{self.save_dir}/{gene}_estimator.pkl', 'rb') as f:
+                loaded_dict =  CPU_Unpickler(f).load()
+            significance_dict[gene] = loaded_dict['is_real']
+        
+        self.significance_dict = significance_dict
+        return significance_dict
+    
+    def show_significant_links(self, goi, celltype_labels=None):
+        import seaborn as sns 
+
+        is_real = self.significance_dict[goi]
+        sig_df = is_real.loc[is_real.sum(1) > 0]
+        if celltype_labels != None:
+            sig_df.rename(columns=celltype_labels, inplace=True)
+        sns.heatmap(
+            sig_df, cmap='viridis', yticklabels=True, xticklabels=True, 
+            linewidths=0.5, linecolor='black', cbar=False)
+
+
+    def plot_beta_effect(self, goi, roi=None, coi=None):
+        '''
+        goi: target gene of interest
+        roi: regulator of interest
+        lroi: ligand-receptor pair of interest
+        coi: cell type of interest
+        '''
+        from collections import defaultdict
+        import plotly.express as px
+
+        def separate_betas(goi):
+            n_regulators = len(self.beta_dict[goi].regulators)
+            n_ligands = len(self.lr['pairs'])
+            reg_betas = self.beta_dict[goi].betas[:, 1:n_regulators+1]
+            lr_betas = self.beta_dict[goi].betas[:, -n_ligands:]
+            return reg_betas, lr_betas
+
+        reg_betas, lr_betas = separate_betas(goi)
+        if roi in self.lr['pairs']:
+            roi_idx = self.lr['pairs'].index(roi)
+            roi_effect = lr_betas.T[roi_idx]
+        else:
+            roi_idx = self.beta_dict[goi].regulators.index(roi)
+            roi_effect = reg_betas.T[roi_idx]
+
+        adata = self.adata
+        if coi != None:
+            mask = adata.obs[self.annot] == coi
+        else:
+            mask = [True] * adata.shape[0]
+        adata = adata[mask]
+
+        X = adata.obsm['spatial'][:, 0]
+        Y = adata.obsm['spatial'][:, 1]
+        Z = []
+
+        occurrence = defaultdict(int)
+        for x, y in zip(X, Y):
+            height = occurrence[(x,y)]
+            occurrence[(x,y)] += 1
+            Z.append(height)
+
+        fig = px.scatter_3d(
+            x=X, y=Y, z=Z,
+            color=roi_effect[mask],
+            color_continuous_scale='Plotly3'
+            )
+
+        fig.update_traces(
+            marker=dict(size=2), 
+            line=dict(width=2, color='black')
+            )
+
+        fig.show()
+
+
     @staticmethod
     def load_estimator(gene, ligands, spatial_dim, nclusters, save_dir):
         with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
@@ -371,7 +451,7 @@ class SpaceOracle(Oracle):
             loaded_dict['model'] = model
 
         return loaded_dict
-    
+
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names
@@ -379,7 +459,7 @@ class SpaceOracle(Oracle):
         assert 'spatial_maps' in adata.obsm.keys()
         nclusters = len(np.unique(adata.obs[self.annot]))
 
-        estimator_dict = self.load_estimator(target_gene, self.ligands, self.spatial_dim, nclusters, self.save_dir)
+        estimator_dict = self.load_estimator(target_gene, self.ligands, self.spatial_dim, nclusters, self.save_dir)        
         estimator_dict['model'].to(device).eval()
         beta_dists = estimator_dict.get('beta_dists', None)
 
@@ -405,6 +485,8 @@ class SpaceOracle(Oracle):
             beta_dict[gene] = self._get_betas(self.adata, gene)
         
         return beta_dict
+
+
     
     def _get_lr_sp_maps(self):
         print('warning! hard-coded radius=200')
@@ -465,7 +547,8 @@ class SpaceOracle(Oracle):
                 # deal with rec constants for ligs 
                 rec_expr = gene_mtx[:, recs]
                 dydl = np.mean(sp_map, axis=0)              # all ligands 
-                lig_gene_matrix[ligs, i] = dydl
+                dydl = rec_expr * dydl
+                lig_gene_matrix[ligs, i] = dydl 
 
                 gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
 
