@@ -131,11 +131,12 @@ class SimpleCNN(nn.Module):
 
 
 class VisionEstimator(AbstractEstimator):
-    def __init__(self, adata, target_gene, grn=None, regulators=None, layer='imputed_count'):
+    def __init__(self, adata, target_gene, annot='rctd_cluster', grn=None, regulators=None, layer='imputed_count'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
 
         self.adata = adata
+        self.annot = annot
         self.target_gene = target_gene
         if grn is None:
             # self.grn = GeneRegulatoryNetwork()
@@ -163,7 +164,7 @@ class VisionEstimator(AbstractEstimator):
         self.ligands = self.lr.ligand.values
         self.receptors = self.lr.receptor.values
 
-        self.n_clusters = len(self.adata.obs['rctd_cluster'].unique())
+        self.n_clusters = len(self.adata.obs[annot].unique())
         
         self.layer = layer
         self.model = None

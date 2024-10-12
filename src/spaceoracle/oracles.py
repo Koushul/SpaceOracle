@@ -23,7 +23,7 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -160,12 +160,14 @@ class OracleQueue:
 
     @property
     def completed_genes(self):
-        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
         return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
     def remaining_genes(self):
-        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
         locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
@@ -186,7 +188,8 @@ class OracleQueue:
 
     @staticmethod
     def extract_gene_name(path):
-        match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        # match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        match = re.search(r'([^/]+)_betadata\.csv$', path)
         return match.group(1) if match else None
     
     @staticmethod
@@ -265,8 +268,12 @@ class SpaceOracle(Oracle):
             # estimator = PixelAttention(
             #     self.adata, target_gene=gene, layer=self.layer)
 
-            estimator = ProbabilisticPixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
+            # estimator = ProbabilisticPixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
+
+            estimator = ProbabilisticPixelModulators(
+                self.adata, target_gene=gene, layer=self.layer,
+                annot=self.annot)
             
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -294,22 +301,26 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
+                estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+
+
                 (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
-                with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump(
-                        {
-                            'model': model.state_dict(), 
-                            'regulators': regulators,
-                            'beta_dists': beta_dists,
-                            'is_real': is_real,
-                        }, 
-                        f
-                    )
-                    self.trained_genes.append(target_gene)
-                    self.queue.delete_lock(gene)
-                    del model
+                # with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
+                #     pickle.dump(
+                #         {
+                #             'model': model.state_dict(), 
+                #             'regulators': regulators,
+                #             'beta_dists': beta_dists,
+                #             'is_real': is_real,
+                #         }, 
+                #         f
+                #     )
+
+                self.trained_genes.append(target_gene)
+                self.queue.delete_lock(gene)
+                del model
 
             gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
             gene_bar.refresh()
@@ -333,7 +344,12 @@ class SpaceOracle(Oracle):
 
         return loaded_dict
     
-    
+
+    @staticmethod
+    def load_betadata(gene, save_dir):
+        return pd.read_csv(f'{save_dir}/{gene}.csv', index_col=0)
+
+
     @torch.no_grad()
     def _get_betas(self, adata, target_gene):
         assert target_gene in adata.var_names

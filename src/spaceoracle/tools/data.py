@@ -103,9 +103,28 @@ class LigRecDataset(SpaceOracleDataset):
 
         # sq.gr.spatial_neighbors(adata, n_neighs=neighbors)
 
-        self.xy = np.array(self.adata.obsm['spatial']).copy()
-        self.ligX =  adata.to_df(layer=layer)[self.ligands].values
-        self.recpX =  adata.to_df(layer=layer)[self.receptors].values
+        xy = np.array(self.adata.obsm['spatial']).copy()
+        ligX =  self.adata.to_df(layer=self.layer)[self.ligands].values
+        recpX =  self.adata.to_df(layer=self.layer)[self.receptors].values
+
+
+        if 'ligand_receptor' not in self.adata.uns:
+            self.lr_exp = np.array([((ligX * gaussian_kernel_2d(
+                c, xy, radius=self.radius)[:, np.newaxis])
+                .mean(axis=0) * recpX[ix]) for ix, c in enumerate(xy)])
+        
+            self.adata.uns['ligand_receptor'] = pd.DataFrame(
+                self.lr_exp, 
+                columns=[i[0]+'-'+i[1] for i in zip(self.ligands, self.receptors)], 
+                index=self.adata.obs.index
+            )
+
+        else:
+            self.lr_exp = self.adata.uns['ligand_receptor'].values
+            assert self.lr_exp.shape[0] == self.adata.shape[0]
+            assert self.lr_exp.shape[1] == len(self.ligands) == len(self.receptors)
+
+
 
     def _process_spatial(self, sp_map):
         if self.rotate_maps:
@@ -117,16 +136,10 @@ class LigRecDataset(SpaceOracleDataset):
     def __getitem__(self, index):
         sp_map = self.spatial_maps[index]
         sp_map = self._process_spatial(sp_map)
+        
         sp_map = tt(sp_map)
-
-        w = gaussian_kernel_2d(self.xy[index], self.xy, radius=self.radius)
-
         tf_exp = tt(self.X[index])
-
-        ligand_exp = (self.ligX.T*w).T
-        receptor_exp = self.recpX[index]
-
-        lr_exp = tt(ligand_exp * receptor_exp).mean(dim=0)
+        lr_exp = tt(self.lr_exp[index])
         target_gene_exp = tt(self.y[index])
         cluster_info = torch.tensor(self.clusters[index]).long()
 
