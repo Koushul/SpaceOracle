@@ -32,6 +32,7 @@ from .models.pixel_attention import NicheAttentionNetwork
 
 from .tools.utils import (
     CPU_Unpickler,
+    clean_up_adata,
     knn_distance_matrix,
     _adata_to_matrix,
     connectivity_to_weights,
@@ -62,6 +63,7 @@ class Oracle(ABC):
             self.pcs = self.perform_PCA(self.adata)
             self.knn_imputation(self.adata, self.pcs)
 
+        clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
     ## canibalized from CellOracle
     @staticmethod
@@ -204,7 +206,7 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05):
+    layer='imputed_count', alpha=0.05, test_mode=False):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -220,7 +222,7 @@ class SpaceOracle(Oracle):
         self.rotate_maps = rotate_maps
         self.layer = layer
         self.alpha = alpha
-
+        self.test_mode = test_mode
         self.beta_dict = None
         self.coef_matrix = None
 
@@ -274,6 +276,8 @@ class SpaceOracle(Oracle):
             estimator = ProbabilisticPixelModulators(
                 self.adata, target_gene=gene, layer=self.layer,
                 annot=self.annot)
+            
+            estimator.test_mode = self.test_mode
             
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -347,7 +351,7 @@ class SpaceOracle(Oracle):
 
     @staticmethod
     def load_betadata(gene, save_dir):
-        return pd.read_csv(f'{save_dir}/{gene}.csv', index_col=0)
+        return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
 
 
     @torch.no_grad()

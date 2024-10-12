@@ -169,6 +169,8 @@ class VisionEstimator(AbstractEstimator):
         self.layer = layer
         self.model = None
         self.losses = []
+
+        self.test_mode = False
         
         # assert len(self.regulators) > 0, f'No regulators found for target gene {self.target_gene}.'
 

@@ -145,8 +145,8 @@ class BayesianRegression(AbstractEstimator):
                 ) / y_train.numel()
 
                 
-                if (epoch==0 or epoch > 0.25*max_epochs) and \
-                      epoch % int(max_epochs/10) == 0:
+                if max_epochs==1 or ((epoch==0 or epoch > 0.25*max_epochs) and \
+                      epoch % int(max_epochs/10) == 0):
                     
                     r2 = self._score(model, guide, X_test, y_test, num_samples=num_samples)
                     if r2 <= best_score:

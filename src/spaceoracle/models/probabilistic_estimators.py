@@ -206,10 +206,13 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 device=torch.device('cpu') ## use cpu for better parallelization
             )
 
+            _max_epochs = 1 if self.test_mode else 1000
+            ns = 1 if self.test_mode else num_samples
+
             self.beta_model.fit(
                 X, y, cluster_labels, 
-                max_epochs=3000, learning_rate=3e-3, 
-                num_samples=num_samples,
+                max_epochs=_max_epochs, learning_rate=3e-3, 
+                num_samples=ns,
                 parallel=parallel
             )
 
@@ -218,7 +221,7 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 self.beta_dists[cluster] = self.beta_model.get_betas(
                     X[cluster_labels==cluster].to(self.beta_model.device), 
                     cluster=cluster, 
-                    num_samples=1000
+                    num_samples=ns
                 )
         
             with open(beta_dists_file, 'wb') as f:
@@ -240,13 +243,15 @@ class ProbabilisticPixelAttention(VisionEstimator):
         del X, y, cluster_labels
 
         try:
+            _max_epochs = 1 if self.test_mode else max_epochs
+
             model, losses = self._build_model(
                 adata,
                 annot,
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 layer=self.layer,
-                max_epochs=max_epochs,
+                max_epochs=_max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
@@ -569,10 +574,14 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 device=torch.device('cpu') ## use cpu for better parallelization
             )
 
+            ns = 1 if self.test_mode else num_samples
+            _max_epochs = 1 if self.test_mode else 3000
+
+
             self.beta_model.fit(
                 X, y, cluster_labels, 
-                max_epochs=3000, learning_rate=3e-3, 
-                num_samples=num_samples,
+                max_epochs=_max_epochs, learning_rate=3e-3, 
+                num_samples=ns,
                 parallel=parallel
             )
 
@@ -581,7 +590,7 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 self.beta_dists[cluster] = self.beta_model.get_betas(
                     X[cluster_labels==cluster].to(self.beta_model.device), 
                     cluster=cluster, 
-                    num_samples=1000
+                    num_samples=ns
                 )
         
             with open(beta_dists_file, 'wb') as f:
@@ -603,13 +612,15 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         del X, y, cluster_labels
 
         try:
+            _max_epochs = 1 if self.test_mode else max_epochs
+
             model, losses = self._build_model(
                 adata,
                 annot,
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 layer=self.layer,
-                max_epochs=max_epochs,
+                max_epochs=_max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
