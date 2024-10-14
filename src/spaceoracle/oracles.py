@@ -213,7 +213,7 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    def __init__(self, adata, save_dir='./models', shift_dir='./shifts',annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
     layer='imputed_count', alpha=0.05, co_grn=None):
         
@@ -242,6 +242,7 @@ class SpaceOracle(Oracle):
         self.rec_idxs = [list(self.adata.var_names).index(r) for r in self.receptors]
 
         self.save_dir = save_dir
+        self.shift_dir = shift_dir
 
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
@@ -524,42 +525,11 @@ class SpaceOracle(Oracle):
         rec_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
         lig_gene_matrix = np.ones((len(genes), len(genes)))   # multiply on top of gene_gene_matrix
 
-
         for i, gene in enumerate(genes):
             
             _beta_out = betas_dict.get(gene, None)
             
             if _beta_out is not None:
-                # regs = _beta_out.regulators_index
-                # ligs = self.lig_idxs
-                # r = np.array(regs + ligs)
-            
-                # gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
-                
-                # # LR component
-                # recs = np.array(self.rec_idxs)
-                # ligs = np.array(self.lig_idxs)
-                # sp_map = self.lr_sp_maps[cell_index]
-
-                # # deal with lig constants for recs
-                # lig_expr = gene_mtx[:, ligs] 
-                # dydr = sp_map[:, np.newaxis] * lig_expr     # dydr without the betas (done earlier)
-                # dydr = np.mean(dydr, axis=0)
-                # rec_gene_matrix[recs, i] = dydr             # set every receptor to dydr constants
-
-                # gene_gene_matrix = gene_gene_matrix * rec_gene_matrix
-
-                # # deal with rec constants for ligs 
-                # rec_expr = gene_mtx[:, recs]
-                # dydl = np.mean(sp_map, axis=0)              # all ligands 
-                # dydl = rec_expr * dydl
-                # lig_gene_matrix[ligs, i] = dydl
-
-                # gene_gene_matrix = gene_gene_matrix * lig_gene_matrix
-
-                # print('old', gene_gene_matrix.sum()) 
-
-                # Optimized code:
                 regs = np.array(_beta_out.regulators_index)
                 ligs = np.array(self.lig_idxs)
                 r = np.concatenate((regs, ligs))
@@ -573,7 +543,9 @@ class SpaceOracle(Oracle):
                 # Precompute common values
                 lig_expr = gene_mtx[:, ligs]
                 dydr = np.mean(sp_map[:, np.newaxis] * lig_expr, axis=0)
-                dydl = np.mean(sp_map) * rec_expr
+                rec_expr = gene_mtx[:, recs][i]
+                # dydl = np.mean(sp_map) * rec_expr
+                dydl = self.avg_w[cell_index] * rec_expr
 
                 # Update matrices efficiently
                 rec_gene_matrix[recs, i] = dydr
@@ -591,17 +563,28 @@ class SpaceOracle(Oracle):
     def simulate_shift(self, perturb_condition={}, n_propagation=3, n_jobs=1):
         '''multi-gene level perturbation'''
 
-        gene_mtx = self.adata.layers['imputed_count']
-        simulation_input = gene_mtx.copy()
-
-        for gene, gex in perturb_condition.items():
-            target_index = self.gene2index[gene]
-            simulation_input[:, target_index] = gex
+        save_path = [f'{g}{v}' for g, v in perturb_condition.items()]
+        save_path = self.shift_dir + '/' + '_'.join(save_path) + '.npy'
+        print(save_path)
         
-        delta_input = simulation_input - gene_mtx
-        delta_simulated = delta_input.copy()
+        if os.path.exists(save_path):
+            gem_simulated = np.load(save_path)
+            
+        else:
+            gene_mtx = self.adata.layers['imputed_count']
+            simulation_input = gene_mtx.copy()
 
-        gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation, n_jobs=n_jobs) 
+            for gene, gex in perturb_condition.items():
+                target_index = self.gene2index[gene]
+                simulation_input[:, target_index] = gex
+            
+            delta_input = simulation_input - gene_mtx
+            delta_simulated = delta_input.copy()
+
+            gem_simulated = self.do_simulation(gene_mtx, delta_input, delta_simulated, n_propagation, n_jobs=n_jobs) 
+            os.makedirs(self.shift_dir, exist_ok=True)
+            np.save(save_path, gem_simulated)
+
         self.adata.layers['perturbed_so'] = gem_simulated
         self.adata.layers['delta_X'] = gem_simulated - self.adata.layers["imputed_count"]
     
@@ -629,6 +612,7 @@ class SpaceOracle(Oracle):
         
         if self.lr_sp_maps is None:
             self.lr_sp_maps = self._get_lr_sp_maps()
+            self.avg_w = [np.mean(cell_map) for cell_map in self.lr_sp_maps]
 
         f = lambda x: self._perturb_single_cell(gene_mtx, delta_simulated, self.beta_dict, x)
 
@@ -636,15 +620,14 @@ class SpaceOracle(Oracle):
 
             from pqdm.threads import pqdm
             obs = list(range(self.adata.n_obs))
-
+    
             _simulated = np.array(
                 pqdm(
                     obs,
                     f,
-                    n_jobs=10,
+                    n_jobs=n_jobs,
                 )
             )
-
 
             delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
