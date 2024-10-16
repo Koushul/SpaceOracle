@@ -5,6 +5,7 @@ import pickle
 import os
 import json 
 import torch
+import networkx as nx 
 
 class GeneRegulatoryNetwork:
     def __init__(self, organism='mouse'):
@@ -24,17 +25,6 @@ class GeneRegulatoryNetwork:
         
         return df.index.tolist()
         
-        tf = base_GRN[base_GRN.gene_short_name==target_gene][
-                np.intersect1d(
-                    adata.var_names, 
-                    base_GRN[base_GRN.gene_short_name==target_gene].columns
-                )
-            ].sum()
-        
-        tf = tf[tf!=0]
-        
-        return tf.index.tolist()
-
 
 class CellOracleLinks:
     
@@ -69,6 +59,23 @@ class CellOracleLinks:
                 for link_data in self.links_day3_1.values()], axis=0).reset_index(drop=True)
         return co_links.query(f'target.isin({str(list(adata.var_names))})').reset_index(drop=True)
     
+    @staticmethod
+    def get_training_genes(co_links, gene_kos, n_propagation=3):
+        grn = nx.DiGraph()
+        edges = []
+
+        for cluster, df in co_links.items():
+            cluster_edges = [(u, v) for u, v in zip(df['source'], df['target'])]
+            edges.extend(cluster_edges)
+        
+        grn.add_edges_from(edges)
+        train_genes = []
+        for ko in gene_kos:
+            genes = [node for node, distance in nx.single_source_shortest_path_length(
+                                                grn, ko, cutoff=n_propagation).items()]
+            train_genes.extend(genes)
+        
+        return np.unique(train_genes)
 
         
 class SurveyRegulatoryNetwork(CellOracleLinks):
@@ -179,3 +186,49 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
 
         return all_regulators
     
+
+class MouseKidneyRegulatoryNetwork(CellOracleLinks):
+    def __init__(self):
+
+        self.base_pth = os.path.join(
+                os.path.dirname(__file__), '..', '..', '..', 'data')
+
+        with open(self.base_pth+'/kidney/celloracle_links.pkl', 'rb') as f:
+            self.links_day3_1 = pickle.load(f)
+
+        self.annot = 'cluster'
+
+        with open(os.path.join(self.base_pth, 'kidney/celltype_assign.json'), 'r') as f:
+            self.cluster_labels = json.load(f)
+
+    
+    def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
+        adata_clusters = np.unique(adata.obs[self.annot])
+        regulator_dict = {}
+        all_regulators = set()
+
+        for label in adata_clusters:
+            # cluster = self.cluster_labels[str(label)]
+            cluster = label
+            grn_df = self.links_day3_1[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[label] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators

@@ -318,7 +318,6 @@ class SpaceOracle(Oracle):
 
                 estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
 
-
                 (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
