@@ -23,7 +23,7 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -32,6 +32,7 @@ from .models.pixel_attention import NicheAttentionNetwork
 
 from .tools.utils import (
     CPU_Unpickler,
+    clean_up_adata,
     knn_distance_matrix,
     _adata_to_matrix,
     connectivity_to_weights,
@@ -62,6 +63,7 @@ class Oracle(ABC):
             self.pcs = self.perform_PCA(self.adata)
             self.knn_imputation(self.adata, self.pcs)
 
+        clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
     ## canibalized from CellOracle
     @staticmethod
@@ -119,10 +121,15 @@ class Oracle(ABC):
 @dataclass
 class BetaOutput:
     betas: np.ndarray
+    modulators: List[str]
     regulators: List[str]
+    ligands: List[str]
+    receptors: List[str]
     target_gene: str
     target_gene_index: int
     regulators_index: List[int]
+    ligands_index: List[int]
+    receptors_index: List[int]
 
 
 class OracleQueue:
@@ -160,12 +167,14 @@ class OracleQueue:
 
     @property
     def completed_genes(self):
-        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
         return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
     def remaining_genes(self):
-        completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
+        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
         locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
@@ -186,14 +195,21 @@ class OracleQueue:
 
     @staticmethod
     def extract_gene_name(path):
-        match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        # match = re.search(r'([^/]+)_estimator\.pkl$', path)
+        match = re.search(r'([^/]+)_betadata\.csv$', path)
         return match.group(1) if match else None
     
     @staticmethod
     def extract_gene_name_from_lock(path):
         match = re.search(r'([^/]+)\.lock$', path)
         return match.group(1) if match else None
+    
 
+    def __str__(self):
+        return f'OracleQueue with {len(self.remaining_genes)} remaining genes'
+    
+    def __repr__(self):
+        return self.__str__()
 
 
 
@@ -201,7 +217,7 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05):
+    layer='imputed_count', alpha=0.05, test_mode=False):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -217,7 +233,7 @@ class SpaceOracle(Oracle):
         self.rotate_maps = rotate_maps
         self.layer = layer
         self.alpha = alpha
-
+        self.test_mode = test_mode
         self.beta_dict = None
         self.coef_matrix = None
 
@@ -265,8 +281,14 @@ class SpaceOracle(Oracle):
             # estimator = PixelAttention(
             #     self.adata, target_gene=gene, layer=self.layer)
 
-            estimator = ProbabilisticPixelAttention(
-                self.adata, target_gene=gene, layer=self.layer)
+            # estimator = ProbabilisticPixelAttention(
+            #     self.adata, target_gene=gene, layer=self.layer)
+
+            estimator = ProbabilisticPixelModulators(
+                self.adata, target_gene=gene, layer=self.layer,
+                annot=self.annot)
+            
+            estimator.test_mode = self.test_mode
             
             if len(estimator.regulators) == 0:
                 self.queue.add_orphan(gene)
@@ -294,22 +316,26 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
+                estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+
+
                 (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
                 assert target_gene == gene
 
-                with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                    pickle.dump(
-                        {
-                            'model': model.state_dict(), 
-                            'regulators': regulators,
-                            'beta_dists': beta_dists,
-                            'is_real': is_real,
-                        }, 
-                        f
-                    )
-                    self.trained_genes.append(target_gene)
-                    self.queue.delete_lock(gene)
-                    del model
+                # with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
+                #     pickle.dump(
+                #         {
+                #             'model': model.state_dict(), 
+                #             'regulators': regulators,
+                #             'beta_dists': beta_dists,
+                #             'is_real': is_real,
+                #         }, 
+                #         f
+                #     )
+
+                self.trained_genes.append(target_gene)
+                self.queue.delete_lock(gene)
+                del model
 
             gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
             gene_bar.refresh()
@@ -333,39 +359,69 @@ class SpaceOracle(Oracle):
 
         return loaded_dict
     
-    
-    @torch.no_grad()
-    def _get_betas(self, adata, target_gene):
-        assert target_gene in adata.var_names
-        assert self.annot in adata.obs.columns
-        assert 'spatial_maps' in adata.obsm.keys()
-        nclusters = len(np.unique(adata.obs[self.annot]))
 
-        estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
-        estimator_dict['model'].to(device).eval()
-        beta_dists = estimator_dict.get('beta_dists', None)
+    @staticmethod
+    def load_betadata(gene, save_dir):
+        return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
 
-        input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
-        input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
-        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
 
-        if beta_dists:
-            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
-            betas = betas * anchors
+    # @torch.no_grad()
+    # def _get_betas(self, adata, target_gene):
+    #     assert target_gene in adata.var_names
+    #     assert self.annot in adata.obs.columns
+    #     assert 'spatial_maps' in adata.obsm.keys()
+    #     nclusters = len(np.unique(adata.obs[self.annot]))
+
+    #     estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
+    #     estimator_dict['model'].to(device).eval()
+    #     beta_dists = estimator_dict.get('beta_dists', None)
+
+    #     input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
+    #     input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
+    #     betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
+
+    #     if beta_dists:
+    #         anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
+    #         betas = betas * anchors
+
+    #     return BetaOutput(
+    #         betas=betas,
+    #         regulators=estimator_dict['regulators'],
+    #         target_gene=target_gene,
+    #         target_gene_index=self.gene2index[target_gene],
+    #         regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
+    #     )
+
+    def _get_betas(self, target_gene):
+        betadata = self.load_betadata(target_gene, self.save_dir)
+        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
+        all_modulators = [i.replace('beta_', '') for i in beta_columns]
+        tfs = [i for i in all_modulators if '$' not in i]
+        lr_pairs = [i for i in all_modulators if '$' in i]
+        ligands = [i.split('$')[0] for i in lr_pairs]
+        receptors = [i.split('$')[1] for i in lr_pairs]
 
         return BetaOutput(
-            betas=betas,
-            regulators=estimator_dict['regulators'],
+            all_betas=betadata[['beta0']+beta_columns].values,
+            tf_betas=betadata[[i for i in beta_columns if '$' not in i]].values,
+            modulators=all_modulators,
+            regulators=tfs,
+            ligands=ligands,
+            receptors=receptors,
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
-            regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
+            regulators_index=[self.gene2index[m] for m in tfs],
+            ligands_index=[self.gene2index[m] for m in ligands],
+            receptors_index=[self.gene2index[m] for m in receptors]
         )
 
 
     def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
-            beta_dict[gene] = self._get_betas(self.adata, gene)
+            # beta_dict[gene] = self._get_betas(self.adata, gene)
+            beta_dict[gene] = self._get_betas(gene)
+
         
         return beta_dict
     

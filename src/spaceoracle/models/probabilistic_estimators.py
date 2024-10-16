@@ -1,33 +1,25 @@
+from sklearn.metrics import r2_score
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import pandas as pd
 import numpy as np
 import copy
 import enlighten
 import pyro
-from pyro.infer import SVI, Trace_ELBO
-from sklearn.metrics import r2_score
 import torch
-from pyro.infer import Predictive
 import pyro
-import pyro.distributions as dist
-from pyro.nn import PyroSample, PyroModule
-from pyro.infer.autoguide import AutoMultivariateNormal, init_to_mean
-from pyro.infer import SVI, Trace_ELBO
 import torch.nn as nn
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 import copy
 import os
 import pickle
-
-from joblib import Parallel, delayed
-
+from tqdm import tqdm
+from sklearn.linear_model import BayesianRidge
 from spaceoracle.models.spatial_map import xyc2spatial_fast
-from spaceoracle.models.estimators import VisionEstimator, AbstractEstimator
+from spaceoracle.models.estimators import VisionEstimator
+from spaceoracle.models.vit_blocks import ViT
 from spaceoracle.tools.data import LigRecDataset
 from .pixel_attention import NicheAttentionNetwork
+from .bayesian_linear import BayesianRegression
 from ..tools.utils import gaussian_kernel_2d, set_seed, seed_worker
-
 
 set_seed(42)
 
@@ -40,169 +32,6 @@ device = torch.device(
 available_cores = os.cpu_count()
 
 pyro.clear_param_store()
-
-
-class BayesianLinearLayer(pyro.nn.PyroModule):
-    def __init__(self, in_features, out_features, device=torch.device('cpu')):
-        super().__init__()
-
-        #  In order to make our linear regression Bayesian, 
-        #  we need to put priors on the parameters weight and bias from nn.Linear. 
-        #  These are distributions that represent our prior belief about 
-        #  reasonable values for and (before observing any data).
-
-        self.linear = PyroModule[nn.Linear](in_features, out_features)
-        self.out_features = out_features
-        self.in_features = in_features
-        self.device = device
-
-        self.linear.weight = PyroSample(
-            prior=dist.Normal(
-                torch.tensor(0., device=self.device), 0.1).expand(
-                    [out_features, in_features]).to_event(2))
-        
-        self.linear.bias = PyroSample(
-            prior=dist.Normal(
-                torch.tensor(0., device=self.device), 0.1).expand(
-                    [out_features]).to_event(1))
-
-    def forward(self, x, y=None):
-        sigma = pyro.sample(
-            "sigma",
-            dist.LogNormal(
-                torch.tensor(0.0, device=self.device),
-                torch.tensor(1.0, device=self.device)
-            )
-        )
-
-        mean = self.linear(x).squeeze(-1)
-
-        with pyro.plate("data", x.shape[0]):
-            obs = pyro.sample("obs", dist.Normal(mean, sigma), obs=y)
-        return mean
-
-
-
-class BayesianRegression(AbstractEstimator):
-
-    def __init__(self, n_regulators, device):
-        self.linear_model = BayesianLinearLayer(n_regulators, 1, device=device)
-        self.linear_model.to(device)
-        self.n_regulators = n_regulators
-        self.models_dict = {}
-        self.guides = {}
-        self.device = device
-
-    
-    def fit(self, X, y, cluster_labels, max_epochs=100, learning_rate=3e-2, num_samples=1000, parallel=True):
-        """
-        In order to do inference, i.e. learn the posterior distribution over our 
-        unobserved parameters, we will use Stochastic Variational Inference (SVI). 
-        The guide determines a family of distributions, and SVI aims to find an 
-        approximate posterior distribution from this family that has the lowest KL 
-        divergence from the true posterior.
-        """
-
-        assert len(X) == len(y) == len(cluster_labels)
-
-        def fit_cluster(cluster):
-            _X = X[cluster_labels == cluster]
-            _y = y[cluster_labels == cluster]
-            # print(f'Cluster {cluster+1}/{len(np.unique(cluster_labels))} |> N={len(_X)}')
-            model, guide = self._fit_one(_X, _y, max_epochs, learning_rate, num_samples)
-            return cluster, model, guide
-
-        unique_clusters = np.unique(cluster_labels)
-
-        if parallel:
-            n_jobs = min(available_cores-1, len(unique_clusters))
-            print(f'Fitting {len(unique_clusters)} models in parallel... with {n_jobs}/{available_cores} cores')
-            results = Parallel(n_jobs=n_jobs)(delayed(fit_cluster)(cluster) for cluster in unique_clusters)
-        else:
-            results = [fit_cluster(cluster) for cluster in tqdm(unique_clusters, desc='Fitting models sequentially...')]
-
-        for cluster, model, guide in results:
-            self.models_dict[cluster] = model
-            self.guides[cluster] = guide
-
-
-    def _score(self, model, guide, X_test, y_test, num_samples=1000):
-        ## note: sampling from the posterior is expensive
-        predictive = Predictive(
-            model, guide=guide, num_samples=num_samples, parallel=False,
-            return_sites=("obs", "_RETURN")
-        )
-        samples = predictive(X_test.to(self.device))
-        y_pred = samples['obs'].mean(0).detach().cpu().numpy()
-
-        return r2_score(y_test.cpu().numpy(), y_pred)
-
-
-    def _fit_one(self, X, y, max_epochs, learning_rate, num_samples):
-        model = BayesianLinearLayer(self.n_regulators, 1, device=self.device)
-        model.train()
-        guide = AutoMultivariateNormal(model, init_loc_fn=init_to_mean)
-        # guide = AutoDiagonalNormal(model)
-        adam = pyro.optim.Adam({"lr": learning_rate, "weight_decay": 0.0})
-        svi = SVI(model, guide, adam, loss=Trace_ELBO())
-
-        pyro.clear_param_store()
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
-
-        # The svi.step() method internally handles the forward pass, loss calculation,
-        # and backward pass (including loss.backward()), so we don't need to call
-        # loss.backward() explicitly here.
-        # ELBO(q) = E_q[log p(x,z)] - E_q[log q(z)]
-
-        best_model = copy.deepcopy(model)
-        best_score = -np.inf
-
-        with tqdm(range(max_epochs), disable=True) as pbar:
-            for epoch in pbar:
-                loss = svi.step(
-                    X_train.to(self.device), 
-                    y_train.to(self.device)
-                ) / y_train.numel()
-
-                
-                if (epoch==0 or epoch > 0.25*max_epochs) and \
-                      epoch % int(max_epochs/10) == 0:
-                    
-                    r2 = self._score(model, guide, X_test, y_test, num_samples=num_samples)
-                    if r2 <= best_score:
-                        break
-                    else:
-                        best_model = copy.deepcopy(model)
-                        best_score = r2
-                    pbar.set_description(f"R2: {r2:.3f}")
-
-        best_model.eval()
-        return best_model, guide
-
-
-
-    def get_betas(self, X, cluster, num_samples=1000):
-        pyro.clear_param_store()
-        model = self.models_dict[cluster]
-        guide = self.guides[cluster]
-
-        predictive = Predictive(
-            model, guide=guide, num_samples=num_samples, parallel=False,
-            return_sites=("linear.bias", "linear.weight", "obs", "_RETURN")
-        )
-        samples = predictive(X.to(self.device))
-
-        beta_0 = samples['linear.bias'].view(-1, 1)
-        betas = samples['linear.weight'].view(-1, self.n_regulators)
-
-        return torch.cat([beta_0, betas], dim=1).detach().cpu().numpy()
-
-
-
-
 
 
 class ProbabilisticPixelAttention(VisionEstimator):
@@ -380,10 +209,13 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 device=torch.device('cpu') ## use cpu for better parallelization
             )
 
+            _max_epochs = 1 if self.test_mode else 1000
+            ns = 1 if self.test_mode else num_samples
+
             self.beta_model.fit(
                 X, y, cluster_labels, 
-                max_epochs=3000, learning_rate=3e-3, 
-                num_samples=num_samples,
+                max_epochs=_max_epochs, learning_rate=3e-3, 
+                num_samples=ns,
                 parallel=parallel
             )
 
@@ -392,7 +224,7 @@ class ProbabilisticPixelAttention(VisionEstimator):
                 self.beta_dists[cluster] = self.beta_model.get_betas(
                     X[cluster_labels==cluster].to(self.beta_model.device), 
                     cluster=cluster, 
-                    num_samples=1000
+                    num_samples=ns
                 )
         
             with open(beta_dists_file, 'wb') as f:
@@ -414,13 +246,15 @@ class ProbabilisticPixelAttention(VisionEstimator):
         del X, y, cluster_labels
 
         try:
+            _max_epochs = 1 if self.test_mode else max_epochs
+
             model, losses = self._build_model(
                 adata,
                 annot,
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 layer=self.layer,
-                max_epochs=max_epochs,
+                max_epochs=_max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
@@ -495,6 +329,31 @@ class ProbabilisticPixelAttention(VisionEstimator):
 
 class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
     
+
+    @staticmethod
+    def received_ligands(xy, lig_df, radius=200):
+        # gex_df = adata.to_df(layer=layer)
+        ligands = lig_df.columns
+        gauss_weights = [
+            gaussian_kernel_2d(
+                xy[i], 
+                xy, 
+                radius=radius) for i in range(len(lig_df)
+            )
+        ]
+        u_ligands = np.unique(ligands)
+        wL = lambda x: np.array([(gauss_weights[i] * lig_df[x]).mean(0) for i in range(len(lig_df))])
+        weighted_ligands = [wL(x) for x in tqdm(u_ligands)]
+
+        return pd.DataFrame(
+            weighted_ligands, 
+            index=u_ligands, 
+            columns=lig_df.index
+        ).T
+
+
+
+
     def _build_dataloaders_from_adata(self,
         adata, target_gene, 
         regulators, ligands, receptors,
@@ -520,7 +379,7 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         }
         
         dataset = LigRecDataset(
-            adata.copy(), 
+            adata, 
             target_gene=target_gene, 
             regulators=regulators, 
             ligands=ligands,
@@ -570,15 +429,27 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             spatial_dim=spatial_dim
         )
 
+
         model = NicheAttentionNetwork(
             n_regulators=len(self.regulators)+len(self.ligands),
             in_channels=self.n_clusters,
             spatial_dim=spatial_dim,
         )
 
-
+        # beta_init = torch.ones(len(self.regulators)+len(self.ligands)+1)
+        # model = ViT(
+        #     beta_init, 
+        #     in_channels=self.n_clusters, 
+        #     spatial_dim=spatial_dim, 
+        #     n_patches=8, 
+        #     n_blocks=4, 
+        #     hidden_d=16, 
+        #     n_heads=2
+        # )
 
         model.to(device)
+
+        # print(model)
 
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -591,7 +462,7 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         # baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
         _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
 
-        print(f'{len(self.regulators)} regulators + {len(self.ligands)} ligands + {len(self.receptors)} receptors')
+        print(f'{len(self.regulators)} regulators + {len(self.lr["pairs"])} ligand-receptor pairs')
 
         if pbar is None:
             _manager = enlighten.get_manager()
@@ -634,7 +505,6 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             )
         
         anchors = torch.from_numpy(anchors).float().to(device)
-
 
         y_pred = anchors[:, 0]*betas[:, 0]
          
@@ -757,26 +627,40 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 self.beta_dists = pickle.load(f)
 
         else:
-            self.beta_model = BayesianRegression(
-                n_regulators=len(self.regulators)+len(self.ligands), 
-                device=torch.device('cpu') ## use cpu for better parallelization
-            )
+            # self.beta_model = BayesianRegression(
+            #     n_regulators=len(self.regulators)+len(self.ligands), 
+            #     device=torch.device('cpu') ## use cpu for better parallelization
+            # )
 
-            self.beta_model.fit(
-                X, y, cluster_labels, 
-                max_epochs=3000, learning_rate=3e-3, 
-                num_samples=num_samples,
-                parallel=parallel
-            )
+            # ns = 1 if self.test_mode else num_samples
+            # _max_epochs = 1 if self.test_mode else 3000
+
+
+            # self.beta_model.fit(
+            #     X, y, cluster_labels, 
+            #     max_epochs=_max_epochs, learning_rate=3e-3, 
+            #     num_samples=ns,
+            #     parallel=parallel
+            # )
+
 
             self.beta_dists = {}
-            for cluster in range(self.n_clusters):
-                self.beta_dists[cluster] = self.beta_model.get_betas(
-                    X[cluster_labels==cluster].to(self.beta_model.device), 
-                    cluster=cluster, 
-                    num_samples=1000
-                )
+            # for cluster in range(self.n_clusters):
+            #     self.beta_dists[cluster] = self.beta_model.get_betas(
+            #         X[cluster_labels==cluster].to(self.beta_model.device), 
+            #         cluster=cluster, 
+            #         num_samples=ns
+            #     )
         
+            for cluster in range(self.n_clusters):
+                m = BayesianRidge()
+                m.fit(X, y)
+                y_pred = m.predict(X)
+                r2 = r2_score(y, y_pred)
+                print(f'cluster {cluster}: R2: {r2}')
+                self.beta_dists[cluster] = np.hstack([m.intercept_, m.coef_]).reshape(1, -1)
+
+
             with open(beta_dists_file, 'wb') as f:
                 pickle.dump(self.beta_dists, f)
 
@@ -787,24 +671,24 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             columns=list(self.regulators)+list(self.lr['pairs'])
         ).T
 
-        for c in self.is_real.columns:
-            for ix, s in enumerate(self.is_real[c].values):
-                if not s:
-                    self.beta_dists[c][:, ix+1] = 0
+        # for c in self.is_real.columns:
+        #     for ix, s in enumerate(self.is_real[c].values):
+        #         if not s:
+        #             self.beta_dists[c][:, ix+1] = 0
 
 
         del X, y, cluster_labels
 
-        # return
-
         try:
+            _max_epochs = 1 if self.test_mode else max_epochs
+
             model, losses = self._build_model(
                 adata,
                 annot,
                 spatial_dim=spatial_dim, 
                 mode=mode,
                 layer=self.layer,
-                max_epochs=max_epochs,
+                max_epochs=_max_epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
                 rotate_maps=rotate_maps,
@@ -813,32 +697,17 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             
             self.model = model  
             self.losses = losses
-            
         
         except KeyboardInterrupt:
             print('Training interrupted...')
 
 
-    def export(self):
-        self.model.eval()
-
-        return (
-            self.model, 
-            self.beta_dists, 
-            self.is_real, 
-            self.regulators, 
-            self.target_gene
-        )
-    
             
     @torch.no_grad()
-    def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, beta_dists=None, layer=None):
+    def get_betas(self, xy=None, spatial_maps=None, labels=None, spatial_dim=None, beta_dists=None):
 
         assert xy is not None or spatial_maps is not None
         assert beta_dists is not None or self.beta_dists is not None
-
-
-
         spatial_dim = self.spatial_dim if spatial_dim is None else spatial_dim
         
         if spatial_maps is None:
@@ -847,7 +716,9 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 m=self.spatial_dim,
                 n=self.spatial_dim,
             ).astype(np.float32)
-            
+
+        if beta_dists is None:
+            beta_dists = self.beta_dists
         
         spatial_maps = torch.from_numpy(spatial_maps)
 
@@ -870,7 +741,98 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         beta_list = []
             
         for batch_spatial, batch_labels in infer_dataloader:
+            anchors = np.stack(
+                [beta_dists[label].mean(0) for label in batch_labels.cpu().numpy()], 
+                axis=0
+            )
+            
             betas = self.model(batch_spatial.to(device), batch_labels.to(device))
-            beta_list.extend(betas.cpu().numpy())
+            beta_list.extend(anchors*betas.cpu().numpy())
         
         return np.array(beta_list)
+    
+
+    def export(self):
+        self.model.eval()
+
+        return (
+            self.model, 
+            self.beta_dists, 
+            self.is_real, 
+            self.regulators, 
+            self.target_gene
+        )
+    
+    @property
+    def betadata(self):
+        betas = self.get_betas(
+            spatial_maps=np.array(self.adata.obsm['spatial_maps']),
+            labels=np.array(self.adata.obs[self.annot]))
+        
+        betas_df = pd.DataFrame(
+            betas, 
+            columns=['beta0']+['beta_'+i for i in self.is_real.index], 
+            index=self.adata.obs.index
+        )
+        
+        gex_df = self.adata.to_df(layer=self.layer)
+        received_ligands = self.adata.uns['received_ligands']
+
+
+
+        ## wL is the amount of ligand 'received' at each location
+        ## assuming ligands and receptors expression are independent, dL/dR = 0
+        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
+        ## dy/dTF1 = b1
+        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
+        ##         = b2*R1 + b3*R2
+        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
+
+
+        b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
+        b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
+
+        ## dy/dR
+        ligand_betas = pd.DataFrame(
+            [b_ligand(x, y).values for x, y in zip(self.ligands, self.receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
+        
+        ## dy/dwL
+        receptor_betas = pd.DataFrame(
+            [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
+        
+        ## linearly combine betas for the same ligands or receptors
+        ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
+        receptor_betas = receptor_betas.groupby(lambda x: x, axis=1).sum()
+
+        assert not any(ligand_betas.columns.duplicated())
+        assert not any(receptor_betas.columns.duplicated())
+        
+        xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
+        gex_modulators = self.regulators+self.ligands+self.receptors+[self.target_gene]
+        
+
+        """
+        # Combine all relevant data into a single DataFrame
+        # one row per cell
+        betas_df \                                      # beta coefficients, TFs and LR-pairs
+            .join(gex_df[np.unique(gex_modulators)]) \  # gene expression data for each modulator
+            .join(self.adata.uns['ligand_receptor']) \  # weighted-ligands*receptor values
+            .join(ligand_betas) \                       # beta_wLR * wL, 
+            .join(receptor_betas) \                     # beta_wLR * R
+            .join(self.adata.obs) \                     # cell type metadata
+            .join(xy)                                   # spatial coordinates
+
+        """
+
+        
+        return betas_df \
+            .join(gex_df[np.unique(gex_modulators)]) \
+            .join(self.adata.uns['ligand_receptor']) \
+            .join(ligand_betas) \
+            .join(receptor_betas) \
+            .join(self.adata.obs) \
+            .join(xy)
+
+

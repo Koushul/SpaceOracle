@@ -17,7 +17,8 @@ def bayesian_regression():
 def sample_data():
     X, y = make_regression(n_samples=100, n_features=5, noise=0.1, random_state=42)
     cluster_labels = np.random.randint(0, 3, size=100)
-    return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32), torch.tensor(cluster_labels)
+    return torch.tensor(X, dtype=torch.float32), torch.tensor(
+        y, dtype=torch.float32), torch.tensor(cluster_labels)
 
 # Add a new fixture to store timing information
 @pytest.fixture(scope="module")
@@ -39,7 +40,8 @@ def test_initialization(bayesian_regression, timing_info):
 def test_fit_sequential(bayesian_regression, sample_data, timing_info):
     start = time.time()
     X, y, cluster_labels = sample_data
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100, parallel=False)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100, parallel=False)
     end = time.time()
     print(f'Time taken: {end-start} seconds')
     assert len(bayesian_regression.models_dict) == 3
@@ -54,7 +56,8 @@ def test_fit_sequential(bayesian_regression, sample_data, timing_info):
 def test_fit_parallel(bayesian_regression, sample_data, timing_info):
     start = time.time()
     X, y, cluster_labels = sample_data
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100, parallel=True)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100, parallel=True)
     
     assert len(bayesian_regression.models_dict) == 3
     assert len(bayesian_regression.guides) == 3
@@ -67,7 +70,8 @@ def test_fit_parallel(bayesian_regression, sample_data, timing_info):
 @pytest.mark.usefixtures("timing_info")
 def test_get_betas(bayesian_regression, sample_data, timing_info):
     X, y, cluster_labels = sample_data
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100)
     
     cluster = 0
     betas = bayesian_regression.get_betas(X[cluster_labels == cluster], cluster, num_samples=100)
@@ -79,7 +83,8 @@ def test_get_betas(bayesian_regression, sample_data, timing_info):
 @pytest.mark.usefixtures("timing_info")
 def test_score(bayesian_regression, sample_data, timing_info):
     X, y, cluster_labels = sample_data
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100)
     
     cluster = 0
     X_test = X[cluster_labels == cluster]
@@ -97,7 +102,8 @@ def test_score(bayesian_regression, sample_data, timing_info):
 @pytest.mark.usefixtures("timing_info")
 def test_fit_one(bayesian_regression, sample_data, timing_info):
     X, y, _ = sample_data
-    model, guide = bayesian_regression._fit_one(X, y, max_epochs=10, learning_rate=1e-2, num_samples=100)
+    model, guide = bayesian_regression._fit_one(X, y, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100)
     
     assert isinstance(model, torch.nn.Module)
     assert callable(guide)
@@ -109,7 +115,8 @@ def test_different_cluster_sizes(bayesian_regression, timing_info):
     y = torch.randn(100)
     cluster_labels = torch.tensor([0] * 60 + [1] * 30 + [2] * 10)
     
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100)
     
     assert len(bayesian_regression.models_dict) == 3
     assert len(bayesian_regression.guides) == 3
@@ -118,7 +125,8 @@ def test_different_cluster_sizes(bayesian_regression, timing_info):
 @pytest.mark.usefixtures("timing_info")
 def test_get_betas_shape(bayesian_regression, sample_data, timing_info):
     X, y, cluster_labels = sample_data
-    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, learning_rate=1e-2, num_samples=100)
+    bayesian_regression.fit(X, y, cluster_labels, max_epochs=10, 
+        learning_rate=1e-2, num_samples=100)
     
     for cluster in range(3):
         X_cluster = X[cluster_labels == cluster]

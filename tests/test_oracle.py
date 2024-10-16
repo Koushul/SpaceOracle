@@ -16,7 +16,7 @@ import torch
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork
 from spaceoracle.oracles import Oracle, OracleQueue, SpaceOracle
 from spaceoracle.models.estimators import PixelAttention
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
 from spaceoracle.models.pixel_attention import NicheAttentionNetwork
 
 import anndata as ad
@@ -96,7 +96,7 @@ def test_oracle_queue_operations(temp_dir):
     assert set(queue.remaining_genes) == set(genes)-{'gene2'}
 
     # Test completed_genes
-    with open(os.path.join(temp_dir, 'gene1_estimator.pkl'), 'w') as f:
+    with open(os.path.join(temp_dir, 'gene1_betadata.csv'), 'w') as f:
         f.write('dummy')
     assert queue.completed_genes == ['gene1']
     assert set(queue.remaining_genes) == {'gene3'}
@@ -110,52 +110,18 @@ def test_space_oracle_initialization(mock_adata_with_true_betas, temp_dir):
     assert 'spatial_maps' in space_oracle.adata.obsm
 
 # @pytest.mark.parametrize("estimator_class", [PixelAttention, ProbabilisticPixelAttention])
-@pytest.mark.parametrize("estimator_class", [ProbabilisticPixelAttention])
+@pytest.mark.parametrize("estimator_class", [ProbabilisticPixelModulators])
 def test_space_oracle_run(mock_adata_with_true_betas, temp_dir, estimator_class):
     adata = mock_adata_with_true_betas
     with patch('spaceoracle.oracles.PixelAttention', MagicMock(return_value=estimator_class(adata, 'Cd74'))):
         space_oracle = SpaceOracle(adata, save_dir=temp_dir, max_epochs=2, batch_size=3)
-        print('Ready to run')
+        space_oracle.adata.uns['received_ligands'] = ProbabilisticPixelModulators.received_ligands(
+            xy=adata.obsm['spatial'], 
+            lig_df=adata.to_df()[[adata.var_names[0]]], 
+            radius=10, 
+        )
         space_oracle.run()
 
     assert len(space_oracle.queue.completed_genes) > 0
     assert len(space_oracle.trained_genes) > 0
     assert len(os.listdir(temp_dir)) > 0
-
-def test_space_oracle_load_estimator(mock_adata_with_true_betas, temp_dir):
-    adata = mock_adata_with_true_betas
-    space_oracle = SpaceOracle(adata, save_dir=temp_dir)
-    
-    # Create a dummy estimator file
-    dummy_estimator = {
-        'model': NicheAttentionNetwork(2, 3, 64).state_dict(),
-        'regulators': ['gene_1', 'gene_2'],
-        'beta_dists': {0: np.random.rand(10, 3)},
-        'is_real': pd.DataFrame({'gene_1': [True], 'gene_2': [False]}),
-    }
-    
-    with open(os.path.join(temp_dir, 'gene_0_estimator.pkl'), 'wb') as f:
-        import pickle
-        pickle.dump(dummy_estimator, f)
-    
-    loaded_dict = space_oracle.load_estimator('gene_0', 64, 3, temp_dir)
-    assert 'model' in loaded_dict
-    assert 'regulators' in loaded_dict
-    assert loaded_dict['regulators'] == ['gene_1', 'gene_2']
-
-def test_space_oracle_get_betas(mock_adata_with_true_betas, temp_dir):
-    adata = mock_adata_with_true_betas
-    space_oracle = SpaceOracle(adata, save_dir=temp_dir)
-    
-    # Mock the load_estimator method
-    space_oracle.load_estimator = MagicMock(return_value={
-        'model': MagicMock(return_value=torch.rand(100, 3)),
-        'regulators': [i for i in adata.var_names.tolist() if i != 'Cd74'],
-    })
-
-    adata.obsm['spatial_maps'] = np.random.rand(adata.n_obs, 3, 64, 64)
-    
-    betas = space_oracle._get_betas(adata, 'Cd74')
-    assert betas.betas.shape == (100, 3)
-    assert betas.regulators == [i for i in adata.var_names.tolist() if i != 'Cd74']
-    assert betas.target_gene == 'Cd74'

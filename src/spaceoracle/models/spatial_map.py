@@ -60,8 +60,9 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     mask = np.repeat(np.expand_dims(mask, axis=0), spatial_maps.shape[0], axis=0)
 
 
-    max_vals = np.max(spatial_maps, axis=(2, 3), keepdims=True)
-    channel_wise_maps = max_vals/spatial_maps*mask 
+    # max_vals = np.max(spatial_maps, axis=(2, 3), keepdims=True)
+    # channel_wise_maps = max_vals/spatial_maps*mask 
+    channel_wise_maps = spatial_maps*mask 
 
 
     # channel_wise_maps = 1.0/channel_wise_maps
@@ -80,7 +81,7 @@ def xyc2spatial(x, y, c, m, n, split_channels=True, disable_tqdm=True):
     # channel_wise_maps = (1+(channel_wise_maps_norm*-1)) * mask
 
 
-    channel_wise_maps = channel_wise_maps_norm
+    # channel_wise_maps = channel_wise_maps_norm
 
 
     # channel_wise_maps = channel_wise_maps_norm
@@ -112,7 +113,7 @@ def xyc2spatial_fast(xyc, m, n):
     Return (n_samples, n_clusters, m, n)
     """
 
-    print(f'🌍️ Generating spatial {m}x{n} maps...')
+    print(f'🌍️ Generating spatial {m}x{n} maps...*')
 
     x, y, c = xyc[:, 0], xyc[:, 1], xyc[:, 2]
     xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
@@ -143,7 +144,9 @@ def xyc2spatial_fast(xyc, m, n):
         for i in range(num_clusters):
             for j in range(m):
                 for k in range(n):
-                    channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
+                    # channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
+                    channel_wise_maps[s, i, j, k] = spatial_maps[s, i, j, k] * mask[i, j, k]
+
 
     # channel_wise_maps = 1.0/channel_wise_maps
     return channel_wise_maps
