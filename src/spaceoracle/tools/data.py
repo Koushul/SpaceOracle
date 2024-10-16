@@ -108,6 +108,22 @@ class LigRecDataset(SpaceOracleDataset):
         recpX =  self.adata.to_df(layer=self.layer)[self.receptors].values
 
 
+        # @staticmethod
+        # def calculate_ligand_receptor_exp(adata, ligands, receptors, radius):
+        #     xy = np.array(adata.obsm['spatial'])
+        #     ligX = adata.to_df(layer='imputed_count')[ligands].values
+        #     recpX = adata.to_df(layer='imputed_count')[receptors].values
+            
+        #     lr_exp = np.array([((ligX * gaussian_kernel_2d(
+        #         c, xy, radius=radius)[:, np.newaxis])
+        #         .mean(axis=0) * recpX[ix]) for ix, c in enumerate(xy)])
+            
+        #     return pd.DataFrame(
+        #         lr_exp,
+        #         columns=[i[0]+'$'+i[1] for i in zip(ligands, receptors)],
+        #         index=adata.obs.index
+        #     )
+
         if 'ligand_receptor' not in self.adata.uns:
             self.lr_exp = np.array([((ligX * gaussian_kernel_2d(
                 c, xy, radius=self.radius)[:, np.newaxis])
@@ -115,7 +131,7 @@ class LigRecDataset(SpaceOracleDataset):
         
             self.adata.uns['ligand_receptor'] = pd.DataFrame(
                 self.lr_exp, 
-                columns=[i[0]+'-'+i[1] for i in zip(self.ligands, self.receptors)], 
+                columns=[i[0]+'$'+i[1] for i in zip(self.ligands, self.receptors)], 
                 index=self.adata.obs.index
             )
 

@@ -89,11 +89,11 @@ class ClusterLeastSquaredEstimator(LeastSquaredEstimator):
 
 class SimpleCNN(nn.Module):
     @deprecated('Please use ViT instead.')
-    def __init__(self, betas, in_channels=1, init=0.1):
+    def __init__(self, nbetas, spatial_dim=64,in_channels=1, init=0.1):
         set_seed(42)
         super().__init__()
-        self.dim = betas.shape[0]
-        self.betas = torch.tensor(betas.astype(np.float32)).to(device)
+        self.dim = nbetas
+        # self.betas = torch.tensor(betas.astype(np.float32)).to(device)
         
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(in_channels, 32, kernel_size=3, padding='same')),
@@ -124,45 +124,43 @@ class SimpleCNN(nn.Module):
             nn.Linear(16, self.dim)
         )
 
-    def forward(self, spatial_map, input_labels):
+    def forward(self, spatial_map):
         spatial_features = self.conv_layers(spatial_map)
         betas = self.fc_layers(spatial_features)
         return betas
 
 
 class VisionEstimator(AbstractEstimator):
-    def __init__(self, adata, target_gene, annot='rctd_cluster', grn=None, regulators=None, layer='imputed_count'):
+    def __init__(self, adata, target_gene, annot='rctd_cluster', 
+            grn=None, regulators=None, df_ligrec=None, layer='imputed_count'):
         assert target_gene in adata.var_names
         assert layer in adata.layers
 
         self.adata = adata
         self.annot = annot
         self.target_gene = target_gene
-        if grn is None:
-            # self.grn = GeneRegulatoryNetwork()
-            # self.grn = SurveyRegulatoryNetwork()
-            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        else:
-            self.grn = grn
         
         if regulators == None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
             self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
         else:
             self.regulators = regulators
 
-        df_ligrec = ct.pp.ligand_receptor_database(
-            database='CellChat', 
-            species='mouse', 
-            signaling_type=None
-        )
-        df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
-
+        if df_ligrec is None:
+            df_ligrec = ct.pp.ligand_receptor_database(
+                database='CellChat', 
+                species='mouse', 
+                signaling_type="Secreted Signaling"
+            )
+            
+            df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
 
         self.lr = df_ligrec
         self.lr = self.lr[self.lr.ligand.isin(adata.var_names) & (self.lr.receptor.isin(adata.var_names))]
-        self.lr['pairs'] = self.lr.ligand.values + '-' + self.lr.receptor.values
-        self.ligands = self.lr.ligand.values
-        self.receptors = self.lr.receptor.values
+
+        self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
+        self.ligands = list(self.lr.ligand.values)
+        self.receptors = list(self.lr.receptor.values)
 
         self.n_clusters = len(self.adata.obs[annot].unique())
         

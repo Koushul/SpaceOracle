@@ -121,10 +121,15 @@ class Oracle(ABC):
 @dataclass
 class BetaOutput:
     betas: np.ndarray
+    modulators: List[str]
     regulators: List[str]
+    ligands: List[str]
+    receptors: List[str]
     target_gene: str
     target_gene_index: int
     regulators_index: List[int]
+    ligands_index: List[int]
+    receptors_index: List[int]
 
 
 class OracleQueue:
@@ -198,7 +203,13 @@ class OracleQueue:
     def extract_gene_name_from_lock(path):
         match = re.search(r'([^/]+)\.lock$', path)
         return match.group(1) if match else None
+    
 
+    def __str__(self):
+        return f'OracleQueue with {len(self.remaining_genes)} remaining genes'
+    
+    def __repr__(self):
+        return self.__str__()
 
 
 
@@ -354,38 +365,63 @@ class SpaceOracle(Oracle):
         return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
 
 
-    @torch.no_grad()
-    def _get_betas(self, adata, target_gene):
-        assert target_gene in adata.var_names
-        assert self.annot in adata.obs.columns
-        assert 'spatial_maps' in adata.obsm.keys()
-        nclusters = len(np.unique(adata.obs[self.annot]))
+    # @torch.no_grad()
+    # def _get_betas(self, adata, target_gene):
+    #     assert target_gene in adata.var_names
+    #     assert self.annot in adata.obs.columns
+    #     assert 'spatial_maps' in adata.obsm.keys()
+    #     nclusters = len(np.unique(adata.obs[self.annot]))
 
-        estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
-        estimator_dict['model'].to(device).eval()
-        beta_dists = estimator_dict.get('beta_dists', None)
+    #     estimator_dict = self.load_estimator(target_gene, self.spatial_dim, nclusters, self.save_dir)
+    #     estimator_dict['model'].to(device).eval()
+    #     beta_dists = estimator_dict.get('beta_dists', None)
 
-        input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
-        input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
-        betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
+    #     input_spatial_maps = torch.from_numpy(adata.obsm['spatial_maps']).float().to(device)
+    #     input_cluster_labels = torch.from_numpy(np.array(adata.obs[self.annot])).long().to(device)
+    #     betas = estimator_dict['model'](input_spatial_maps, input_cluster_labels).cpu().numpy()
 
-        if beta_dists:
-            anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
-            betas = betas * anchors
+    #     if beta_dists:
+    #         anchors = np.stack([beta_dists[label].mean(0) for label in input_cluster_labels.cpu().numpy()], axis=0)
+    #         betas = betas * anchors
+
+    #     return BetaOutput(
+    #         betas=betas,
+    #         regulators=estimator_dict['regulators'],
+    #         target_gene=target_gene,
+    #         target_gene_index=self.gene2index[target_gene],
+    #         regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
+    #     )
+
+    def _get_betas(self, target_gene):
+        betadata = self.load_betadata(target_gene, self.save_dir)
+        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
+        all_modulators = [i.replace('beta_', '') for i in beta_columns]
+        tfs = [i for i in all_modulators if '$' not in i]
+        lr_pairs = [i for i in all_modulators if '$' in i]
+        ligands = [i.split('$')[0] for i in lr_pairs]
+        receptors = [i.split('$')[1] for i in lr_pairs]
 
         return BetaOutput(
-            betas=betas,
-            regulators=estimator_dict['regulators'],
+            all_betas=betadata[['beta0']+beta_columns].values,
+            tf_betas=betadata[[i for i in beta_columns if '$' not in i]].values,
+            modulators=all_modulators,
+            regulators=tfs,
+            ligands=ligands,
+            receptors=receptors,
             target_gene=target_gene,
             target_gene_index=self.gene2index[target_gene],
-            regulators_index=[self.gene2index[regulator] for regulator in estimator_dict['regulators']]
+            regulators_index=[self.gene2index[m] for m in tfs],
+            ligands_index=[self.gene2index[m] for m in ligands],
+            receptors_index=[self.gene2index[m] for m in receptors]
         )
 
 
     def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
-            beta_dict[gene] = self._get_betas(self.adata, gene)
+            # beta_dict[gene] = self._get_betas(self.adata, gene)
+            beta_dict[gene] = self._get_betas(gene)
+
         
         return beta_dict
     

@@ -1,3 +1,4 @@
+from sklearn.metrics import r2_score
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import pandas as pd
 import numpy as np
@@ -10,9 +11,11 @@ import torch.nn as nn
 import copy
 import os
 import pickle
-
+from tqdm import tqdm
+from sklearn.linear_model import BayesianRidge
 from spaceoracle.models.spatial_map import xyc2spatial_fast
 from spaceoracle.models.estimators import VisionEstimator
+from spaceoracle.models.vit_blocks import ViT
 from spaceoracle.tools.data import LigRecDataset
 from .pixel_attention import NicheAttentionNetwork
 from .bayesian_linear import BayesianRegression
@@ -326,6 +329,31 @@ class ProbabilisticPixelAttention(VisionEstimator):
 
 class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
     
+
+    @staticmethod
+    def received_ligands(xy, lig_df, radius=200):
+        # gex_df = adata.to_df(layer=layer)
+        ligands = lig_df.columns
+        gauss_weights = [
+            gaussian_kernel_2d(
+                xy[i], 
+                xy, 
+                radius=radius) for i in range(len(lig_df)
+            )
+        ]
+        u_ligands = np.unique(ligands)
+        wL = lambda x: np.array([(gauss_weights[i] * lig_df[x]).mean(0) for i in range(len(lig_df))])
+        weighted_ligands = [wL(x) for x in tqdm(u_ligands)]
+
+        return pd.DataFrame(
+            weighted_ligands, 
+            index=u_ligands, 
+            columns=lig_df.index
+        ).T
+
+
+
+
     def _build_dataloaders_from_adata(self,
         adata, target_gene, 
         regulators, ligands, receptors,
@@ -401,13 +429,27 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             spatial_dim=spatial_dim
         )
 
+
         model = NicheAttentionNetwork(
             n_regulators=len(self.regulators)+len(self.ligands),
             in_channels=self.n_clusters,
             spatial_dim=spatial_dim,
         )
 
+        # beta_init = torch.ones(len(self.regulators)+len(self.ligands)+1)
+        # model = ViT(
+        #     beta_init, 
+        #     in_channels=self.n_clusters, 
+        #     spatial_dim=spatial_dim, 
+        #     n_patches=8, 
+        #     n_blocks=4, 
+        #     hidden_d=16, 
+        #     n_heads=2
+        # )
+
         model.to(device)
+
+        # print(model)
 
         criterion = nn.MSELoss(reduction='mean')
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -569,30 +611,40 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 self.beta_dists = pickle.load(f)
 
         else:
-            self.beta_model = BayesianRegression(
-                n_regulators=len(self.regulators)+len(self.ligands), 
-                device=torch.device('cpu') ## use cpu for better parallelization
-            )
+            # self.beta_model = BayesianRegression(
+            #     n_regulators=len(self.regulators)+len(self.ligands), 
+            #     device=torch.device('cpu') ## use cpu for better parallelization
+            # )
 
-            ns = 1 if self.test_mode else num_samples
-            _max_epochs = 1 if self.test_mode else 3000
+            # ns = 1 if self.test_mode else num_samples
+            # _max_epochs = 1 if self.test_mode else 3000
 
 
-            self.beta_model.fit(
-                X, y, cluster_labels, 
-                max_epochs=_max_epochs, learning_rate=3e-3, 
-                num_samples=ns,
-                parallel=parallel
-            )
+            # self.beta_model.fit(
+            #     X, y, cluster_labels, 
+            #     max_epochs=_max_epochs, learning_rate=3e-3, 
+            #     num_samples=ns,
+            #     parallel=parallel
+            # )
+
 
             self.beta_dists = {}
-            for cluster in range(self.n_clusters):
-                self.beta_dists[cluster] = self.beta_model.get_betas(
-                    X[cluster_labels==cluster].to(self.beta_model.device), 
-                    cluster=cluster, 
-                    num_samples=ns
-                )
+            # for cluster in range(self.n_clusters):
+            #     self.beta_dists[cluster] = self.beta_model.get_betas(
+            #         X[cluster_labels==cluster].to(self.beta_model.device), 
+            #         cluster=cluster, 
+            #         num_samples=ns
+            #     )
         
+            for cluster in range(self.n_clusters):
+                m = BayesianRidge()
+                m.fit(X, y)
+                y_pred = m.predict(X)
+                r2 = r2_score(y, y_pred)
+                print(f'cluster {cluster}: R2: {r2}')
+                self.beta_dists[cluster] = np.hstack([m.intercept_, m.coef_]).reshape(1, -1)
+
+
             with open(beta_dists_file, 'wb') as f:
                 pickle.dump(self.beta_dists, f)
 
@@ -603,10 +655,10 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             columns=list(self.regulators)+list(self.lr['pairs'])
         ).T
 
-        for c in self.is_real.columns:
-            for ix, s in enumerate(self.is_real[c].values):
-                if not s:
-                    self.beta_dists[c][:, ix+1] = 0
+        # for c in self.is_real.columns:
+        #     for ix, s in enumerate(self.is_real[c].values):
+        #         if not s:
+        #             self.beta_dists[c][:, ix+1] = 0
 
 
         del X, y, cluster_labels
@@ -700,12 +752,71 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         betas = self.get_betas(
             spatial_maps=np.array(self.adata.obsm['spatial_maps']),
             labels=np.array(self.adata.obs[self.annot]))
+        
+        betas_df = pd.DataFrame(
+            betas, 
+            columns=['beta0']+['beta_'+i for i in self.is_real.index], 
+            index=self.adata.obs.index
+        )
+        
+        gex_df = self.adata.to_df(layer=self.layer)
+        received_ligands = self.adata.uns['received_ligands']
 
-        return pd.DataFrame(
-                betas, 
-                columns=['beta0']+['beta_'+i for i in self.is_real.index], 
-                index=self.adata.obs.index
-            ).join(self.adata.to_df(layer=self.layer)[self.regulators]) \
+
+
+        ## wL is the amount of ligand 'received' at each location
+        ## assuming ligands and receptors expression are independent, dL/dR = 0
+        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
+        ## dy/dTF1 = b1
+        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
+        ##         = b2*R1 + b3*R2
+        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
+
+
+        b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
+        b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
+
+        ## dy/dR
+        ligand_betas = pd.DataFrame(
+            [b_ligand(x, y).values for x, y in zip(self.ligands, self.receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
+        
+        ## dy/dwL
+        receptor_betas = pd.DataFrame(
+            [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
+        
+        ## linearly combine betas for the same ligands or receptors
+        ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
+        receptor_betas = receptor_betas.groupby(lambda x: x, axis=1).sum()
+
+        assert not any(ligand_betas.columns.duplicated())
+        assert not any(receptor_betas.columns.duplicated())
+        
+        xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
+        gex_modulators = self.regulators+self.ligands+self.receptors+[self.target_gene]
+        
+
+        """
+        # Combine all relevant data into a single DataFrame
+        # one row per cell
+        betas_df \                                      # beta coefficients, TFs and LR-pairs
+            .join(gex_df[np.unique(gex_modulators)]) \  # gene expression data for each modulator
+            .join(self.adata.uns['ligand_receptor']) \  # weighted-ligands*receptor values
+            .join(ligand_betas) \                       # beta_wLR * wL, 
+            .join(receptor_betas) \                     # beta_wLR * R
+            .join(self.adata.obs) \                     # cell type metadata
+            .join(xy)                                   # spatial coordinates
+
+        """
+
+        
+        return betas_df \
+            .join(gex_df[np.unique(gex_modulators)]) \
             .join(self.adata.uns['ligand_receptor']) \
-            .join(self.adata.obs)
-    
+            .join(ligand_betas) \
+            .join(receptor_betas) \
+            .join(self.adata.obs) \
+            .join(xy)
+
+

@@ -120,7 +120,9 @@ class NicheAttentionNetwork(nn.Module):
         self.out_channels = in_channels
         self.spatial_dim = spatial_dim
         self.dim = n_regulators+1
-        self.conditional_conv = ConditionalConv2D(self.in_channels, self.in_channels, 1)
+        # self.conditional_conv = ConditionalConv2D(self.in_channels, self.in_channels, 1)
+        self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
+
         self.sigmoid = nn.Sigmoid()
 
         self.conv_layers = nn.Sequential(
@@ -148,19 +150,19 @@ class NicheAttentionNetwork(nn.Module):
             nn.Linear(64, self.dim)
         )
 
-        self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        self.alpha = nn.Parameter(torch.tensor(0.0), requires_grad=True)
 
         self.output_activation = nn.Tanh()
 
 
     def forward(self, spatial_maps, cluster_info):
-        att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
+        # att = self.sigmoid(self.conditional_conv(spatial_maps, cluster_info))
+        att = self.sigmoid(self.conditional_conv(spatial_maps))
         out = att * spatial_maps
         out = self.conv_layers(out)
         emb = self.cluster_emb(cluster_info) * self.alpha
         out = out + emb 
 
         betas = self.mlp(out)
-        betas = self.output_activation(betas)
 
         return betas

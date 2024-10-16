@@ -115,27 +115,13 @@ def test_space_oracle_run(mock_adata_with_true_betas, temp_dir, estimator_class)
     adata = mock_adata_with_true_betas
     with patch('spaceoracle.oracles.PixelAttention', MagicMock(return_value=estimator_class(adata, 'Cd74'))):
         space_oracle = SpaceOracle(adata, save_dir=temp_dir, max_epochs=2, batch_size=3)
-        print('Ready to run')
+        space_oracle.adata.uns['received_ligands'] = ProbabilisticPixelModulators.received_ligands(
+            xy=adata.obsm['spatial'], 
+            lig_df=adata.to_df()[[adata.var_names[0]]], 
+            radius=10, 
+        )
         space_oracle.run()
 
     assert len(space_oracle.queue.completed_genes) > 0
     assert len(space_oracle.trained_genes) > 0
     assert len(os.listdir(temp_dir)) > 0
-
-
-def test_space_oracle_get_betas(mock_adata_with_true_betas, temp_dir):
-    adata = mock_adata_with_true_betas
-    space_oracle = SpaceOracle(adata, save_dir=temp_dir)
-    
-    # Mock the load_estimator method
-    space_oracle.load_estimator = MagicMock(return_value={
-        'model': MagicMock(return_value=torch.rand(100, 3)),
-        'regulators': [i for i in adata.var_names.tolist() if i != 'Cd74'],
-    })
-
-    adata.obsm['spatial_maps'] = np.random.rand(adata.n_obs, 3, 64, 64)
-    
-    betas = space_oracle._get_betas(adata, 'Cd74')
-    assert betas.betas.shape == (100, 3)
-    assert betas.regulators == [i for i in adata.var_names.tolist() if i != 'Cd74']
-    assert betas.target_gene == 'Cd74'
