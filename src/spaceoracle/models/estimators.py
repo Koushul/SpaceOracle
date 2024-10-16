@@ -146,6 +146,7 @@ class VisionEstimator(AbstractEstimator):
         else:
             self.regulators = regulators
 
+
         if df_ligrec is None:
             df_ligrec = ct.pp.ligand_receptor_database(
                 database='CellChat', 
@@ -161,9 +162,11 @@ class VisionEstimator(AbstractEstimator):
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
         self.ligands = list(self.lr.ligand.values)
         self.receptors = list(self.lr.receptor.values)
-
         self.n_clusters = len(self.adata.obs[annot].unique())
         
+        self.modulators = self.regulators + list(self.lr['pairs'])
+        self.modulators_genes = list(np.unique(self.regulators+self.ligands+self.receptors))
+
         self.layer = layer
         self.model = None
         self.losses = []

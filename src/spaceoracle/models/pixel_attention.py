@@ -164,5 +164,6 @@ class NicheAttentionNetwork(nn.Module):
         out = out + emb 
 
         betas = self.mlp(out)
+        betas = self.output_activation(betas)
 
         return betas

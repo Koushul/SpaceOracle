@@ -1,3 +1,5 @@
+from pysal.model.spreg import OLS
+from scipy.stats import t
 from sklearn.metrics import r2_score
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import pandas as pd
@@ -14,7 +16,7 @@ import pickle
 from tqdm import tqdm
 from sklearn.linear_model import BayesianRidge
 from spaceoracle.models.spatial_map import xyc2spatial_fast
-from spaceoracle.models.estimators import VisionEstimator
+from spaceoracle.models.estimators import LeastSquaredEstimator, VisionEstimator
 from spaceoracle.models.vit_blocks import ViT
 from spaceoracle.tools.data import LigRecDataset
 from .pixel_attention import NicheAttentionNetwork
@@ -341,9 +343,9 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 radius=radius) for i in range(len(lig_df)
             )
         ]
-        u_ligands = np.unique(ligands)
+        u_ligands = list(np.unique(ligands))
         wL = lambda x: np.array([(gauss_weights[i] * lig_df[x]).mean(0) for i in range(len(lig_df))])
-        weighted_ligands = [wL(x) for x in tqdm(u_ligands)]
+        weighted_ligands = [wL(x) for x in u_ligands]
 
         return pd.DataFrame(
             weighted_ligands, 
@@ -568,7 +570,11 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         upper_bound = np.percentile(betas, 100 * (1 - alpha / 2), axis=0)
         significant = (lower_bound > 0) | (upper_bound < 0)
         
-        return significant
+        # Calculate p-values
+        t_statistic = np.mean(betas, axis=0) / (np.std(betas, axis=0) / np.sqrt(betas.shape[0]))
+        p_values = 2 * (1 - t.cdf(np.abs(t_statistic), df=betas.shape[0] - 1))
+        
+        return significant, p_values
 
 
 
@@ -627,38 +633,37 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
                 self.beta_dists = pickle.load(f)
 
         else:
-            # self.beta_model = BayesianRegression(
-            #     n_regulators=len(self.regulators)+len(self.ligands), 
-            #     device=torch.device('cpu') ## use cpu for better parallelization
-            # )
+            self.beta_model = BayesianRegression(
+                n_regulators=len(self.regulators)+len(self.ligands), 
+                device=torch.device('cpu') ## use cpu for better parallelization
+            )
 
-            # ns = 1 if self.test_mode else num_samples
-            # _max_epochs = 1 if self.test_mode else 3000
+            ns = 1 if self.test_mode else num_samples
+            _max_epochs = 1 if self.test_mode else 3000
 
 
-            # self.beta_model.fit(
-            #     X, y, cluster_labels, 
-            #     max_epochs=_max_epochs, learning_rate=3e-3, 
-            #     num_samples=ns,
-            #     parallel=parallel
-            # )
-
+            self.beta_model.fit(
+                X, y, cluster_labels, 
+                max_epochs=_max_epochs, learning_rate=3e-3, 
+                num_samples=ns,
+                parallel=parallel
+            )
 
             self.beta_dists = {}
-            # for cluster in range(self.n_clusters):
-            #     self.beta_dists[cluster] = self.beta_model.get_betas(
-            #         X[cluster_labels==cluster].to(self.beta_model.device), 
-            #         cluster=cluster, 
-            #         num_samples=ns
-            #     )
-        
             for cluster in range(self.n_clusters):
-                m = BayesianRidge()
-                m.fit(X, y)
-                y_pred = m.predict(X)
-                r2 = r2_score(y, y_pred)
-                print(f'cluster {cluster}: R2: {r2}')
-                self.beta_dists[cluster] = np.hstack([m.intercept_, m.coef_]).reshape(1, -1)
+                self.beta_dists[cluster] = self.beta_model.get_betas(
+                    X[cluster_labels==cluster].to(self.beta_model.device), 
+                    cluster=cluster, 
+                    num_samples=ns
+                )
+
+            # p_values = []
+
+            # for cluster in range(self.n_clusters):
+            #     # m = BayesianRidge()
+            #     m = OLS(y.numpy()[cluster_labels==cluster], X.numpy()[cluster_labels==cluster])
+            #     self.beta_dists[cluster] = m.betas
+            #     p_values.append(m.pvals)
 
 
             with open(beta_dists_file, 'wb') as f:
@@ -667,17 +672,26 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         
 
         self.is_real = pd.DataFrame(
-            [self.test_significance(self.beta_dists[i][:, 1:], alpha=alpha) for i in self.beta_dists.keys()], 
+            [self.test_significance(self.beta_dists[i][:, 1:], alpha=alpha)[0] for i in self.beta_dists.keys()], 
             columns=list(self.regulators)+list(self.lr['pairs'])
         ).T
 
-        # for c in self.is_real.columns:
-        #     for ix, s in enumerate(self.is_real[c].values):
-        #         if not s:
-        #             self.beta_dists[c][:, ix+1] = 0
+
+        self.pvals = pd.DataFrame(
+            [self.test_significance(self.beta_dists[i][:, 1:], alpha=alpha)[1] for i in self.beta_dists.keys()], 
+            columns=list(self.regulators)+list(self.lr['pairs'])
+        ).T
+
+
+        for c in self.is_real.columns:
+            for ix, s in enumerate(self.is_real[c].values):
+                if not s:
+                    self.beta_dists[c][:, ix+1] = 0
 
 
         del X, y, cluster_labels
+
+        # return
 
         try:
             _max_epochs = 1 if self.test_mode else max_epochs
@@ -769,6 +783,9 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             spatial_maps=np.array(self.adata.obsm['spatial_maps']),
             labels=np.array(self.adata.obs[self.annot]))
         
+        gex_tf = self.adata.to_df(layer=self.layer)[self.regulators].values
+        gex_lr = self.adata.uns['ligand_receptor'].values
+
         betas_df = pd.DataFrame(
             betas, 
             columns=['beta0']+['beta_'+i for i in self.is_real.index], 
@@ -827,12 +844,20 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         """
 
         
-        return betas_df \
+        _data = betas_df \
             .join(gex_df[np.unique(gex_modulators)]) \
             .join(self.adata.uns['ligand_receptor']) \
             .join(ligand_betas) \
             .join(receptor_betas) \
             .join(self.adata.obs) \
             .join(xy)
+        
+        inputs_x = _data[self.regulators+list(self.lr['pairs'])].values
+        betas = _data[[f'beta_{i}' for i in self.regulators+list(self.lr['pairs'])]].values
+        y_pred = _data['beta0'].values
+        for i in range(inputs_x.shape[1]):
+            y_pred += inputs_x[:, i] * betas[:, i]
+        _data[f'target_{self.target_gene}'] = y_pred
+        return _data
 
 
