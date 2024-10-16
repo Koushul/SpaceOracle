@@ -144,8 +144,8 @@ def xyc2spatial_fast(xyc, m, n):
         for i in range(num_clusters):
             for j in range(m):
                 for k in range(n):
-                    # channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
-                    channel_wise_maps[s, i, j, k] = spatial_maps[s, i, j, k] * mask[i, j, k]
+                    channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
+                    # channel_wise_maps[s, i, j, k] = spatial_maps[s, i, j, k] * mask[i, j, k]
 
 
     # channel_wise_maps = 1.0/channel_wise_maps
