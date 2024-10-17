@@ -49,14 +49,14 @@ class CellOracleLinks:
         assert target_gene in adata.var_names, f'{target_gene} not in adata.var_names'
         co_links = pd.concat(
             [link_data.query(f'target == "{target_gene}" and p < {alpha}')[['source', 'coef_mean']] 
-                for link_data in self.links_day3_1.values()], axis=0).reset_index(drop=True)
+                for link_data in self.links.values()], axis=0).reset_index(drop=True)
         return co_links.query(f'source.isin({str(list(adata.var_names))})').reset_index(drop=True)
     
     def get_targets_with_pvalues(self, adata, tf, alpha=0.05):
         assert tf in adata.var_names, f'{tf} not in adata.var_names'
         co_links = pd.concat(
             [link_data.query(f'source == "{tf}" and p < {alpha}')[['target', 'coef_mean']] 
-                for link_data in self.links_day3_1.values()], axis=0).reset_index(drop=True)
+                for link_data in self.links.values()], axis=0).reset_index(drop=True)
         return co_links.query(f'target.isin({str(list(adata.var_names))})').reset_index(drop=True)
     
     @staticmethod
@@ -84,7 +84,7 @@ class SurveyRegulatoryNetwork(CellOracleLinks):
                 os.path.dirname(__file__), '..', '..', '..', 'data')
 
         with open(self.base_pth+'/survey/celloracle_links_spleen.pkl', 'rb') as f:
-            self.links_day3_1 = pickle.load(f)
+            self.links = pickle.load(f)
 
         self.cluster_labels = {
             '8': 'T',
@@ -109,7 +109,7 @@ class SurveyRegulatoryNetwork(CellOracleLinks):
 
         for label in adata_clusters:
             cluster = self.cluster_labels[str(label)]
-            grn_df = self.links_day3_1[cluster]
+            grn_df = self.links[cluster]
 
             grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
             tfs = list(grn_df.source)
@@ -145,8 +145,8 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         self.base_pth = os.path.join(
                 os.path.dirname(__file__), '..', '..', '..', 'data')
 
-        with open(self.base_pth+'/slideseq/celloracle_links_day3_1.pkl', 'rb') as f:
-            self.links_day3_1 = pickle.load(f)
+        with open(self.base_pth+'/slideseq/celloracle_links.pkl', 'rb') as f:
+            self.links = pickle.load(f)
 
         self.annot = 'rctd_cluster'
 
@@ -163,7 +163,7 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         for label in adata_clusters:
             # cluster = self.cluster_labels[str(label)]
             cluster = label
-            grn_df = self.links_day3_1[cluster]
+            grn_df = self.links[cluster]
 
             grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
             tfs = list(grn_df.source)
@@ -194,7 +194,7 @@ class MouseKidneyRegulatoryNetwork(CellOracleLinks):
                 os.path.dirname(__file__), '..', '..', '..', 'data')
 
         with open(self.base_pth+'/kidney/celloracle_links.pkl', 'rb') as f:
-            self.links_day3_1 = pickle.load(f)
+            self.links = pickle.load(f)
 
         self.annot = 'cluster'
 
@@ -210,7 +210,7 @@ class MouseKidneyRegulatoryNetwork(CellOracleLinks):
         for label in adata_clusters:
             # cluster = self.cluster_labels[str(label)]
             cluster = label
-            grn_df = self.links_day3_1[cluster]
+            grn_df = self.links[cluster]
 
             grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
             tfs = list(grn_df.source)

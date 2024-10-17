@@ -65,7 +65,7 @@ class Oracle(ABC):
 
         clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def perform_PCA(adata, n_components=None, div_by_std=False):
         X = _adata_to_matrix(adata, "normalized_count")
@@ -75,13 +75,16 @@ class Oracle(ABC):
             pcs = pca.fit_transform(X.T / X.std(0))
         else:
             pcs = pca.fit_transform(X.T)
+        
+        cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+        n_comps = np.where(cumulative_variance >= 0.98)[0][0] + 1
 
-        return pcs
+        return pcs[:, :n_comps]
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
-                       n_pca_dims=None, maximum=False,
+                       n_pca_dims=50, maximum=False,
                        balanced=False, b_sight=None, b_maxl=None,
                        group_constraint=None, n_jobs=8) -> None:
         
@@ -96,15 +99,8 @@ class Oracle(ABC):
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
 
-
+        n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
-
-        # if balanced:
-        #     bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
-        #                        metric=metric, mode="distance", n_jobs=n_jobs)
-        #     bknn.fit(space)
-        #     knn = bknn.kneighbors_graph(mode="distance")
-        # else:
 
         knn = knn_distance_matrix(space, metric=metric, k=k,
                                         mode="distance", n_jobs=n_jobs)
@@ -215,14 +211,17 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', grn=None,
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
     layer='imputed_count', alpha=0.05, test_mode=False):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        self.save_dir = save_dir
+        if grn is None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else: 
+            self.grn = grn
 
+        self.save_dir = save_dir
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
