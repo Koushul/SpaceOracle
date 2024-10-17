@@ -96,7 +96,7 @@ class BayesianRegression(AbstractEstimator):
             results = Parallel(n_jobs=n_jobs)(delayed(fit_cluster)(cluster) for cluster in unique_clusters)
         else:
             results = [fit_cluster(cluster) for cluster in tqdm(
-                unique_clusters, desc='Fitting models sequentially...')]
+                unique_clusters)]
 
         for cluster, model, guide in results:
             self.models_dict[cluster] = model
