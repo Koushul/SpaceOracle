@@ -74,7 +74,8 @@ def test_space_oracle_inference(mock_adata, temp_dir):
         target=target, n_propagation=1
     )
 
-    assert len(np.where((so.adata.to_df(layer='imputed_count').values - perturbed_matrix_1).sum(0) !=0)[0]) > 0
+    assert len(np.where((so.adata.to_df(
+        layer='imputed_count').values - perturbed_matrix_1).sum(0) !=0)[0]) > 0
 
 
 
