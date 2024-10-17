@@ -35,6 +35,7 @@ available_cores = os.cpu_count()
 
 pyro.clear_param_store()
 
+cmn = lambda x, y: len(np.intersect1d(x, y))
 
 class ProbabilisticPixelAttention(VisionEstimator):
 
@@ -370,6 +371,13 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
 
         g = torch.Generator()
         g.manual_seed(42)
+
+
+        self.adata.uns['received_ligands'] = self.received_ligands(
+            self.adata.obsm['spatial'], 
+            self.adata.to_df(layer=self.layer)[np.unique(self.ligands)], 
+            radius=self.radius,
+        )
         
         params = {
             'batch_size': batch_size,
@@ -464,7 +472,9 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         # baseline_loss = self._estimate_baseline(valid_dataloader, self.beta_init)
         _prefix = f'[{self.target_gene} / {len(self.regulators)}]'
 
-        print(f'{len(self.regulators)} regulators + {len(self.lr["pairs"])} ligand-receptor pairs')
+        real_modulators = self.is_real.loc[self.is_real.sum(1) > 0].index.tolist()
+
+        print(f'{self.target_gene} > {cmn(self.regulators, real_modulators)} regulators + {cmn(self.lr["pairs"], real_modulators)} ligand-receptor pairs')
 
         if pbar is None:
             _manager = enlighten.get_manager()
@@ -783,9 +793,6 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
             spatial_maps=np.array(self.adata.obsm['spatial_maps']),
             labels=np.array(self.adata.obs[self.annot]))
         
-        gex_tf = self.adata.to_df(layer=self.layer)[self.regulators].values
-        gex_lr = self.adata.uns['ligand_receptor'].values
-
         betas_df = pd.DataFrame(
             betas, 
             columns=['beta0']+['beta_'+i for i in self.is_real.index], 
@@ -794,8 +801,6 @@ class ProbabilisticPixelModulators(ProbabilisticPixelAttention):
         
         gex_df = self.adata.to_df(layer=self.layer)
         received_ligands = self.adata.uns['received_ligands']
-
-
 
         ## wL is the amount of ligand 'received' at each location
         ## assuming ligands and receptors expression are independent, dL/dR = 0

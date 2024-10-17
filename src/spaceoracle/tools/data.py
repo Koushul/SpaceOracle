@@ -124,21 +124,20 @@ class LigRecDataset(SpaceOracleDataset):
         #         index=adata.obs.index
         #     )
 
-        if 'ligand_receptor' not in self.adata.uns:
-            self.lr_exp = np.array([((ligX * gaussian_kernel_2d(
-                c, xy, radius=self.radius)[:, np.newaxis])
-                .mean(axis=0) * recpX[ix]) for ix, c in enumerate(xy)])
-        
-            self.adata.uns['ligand_receptor'] = pd.DataFrame(
-                self.lr_exp, 
-                columns=[i[0]+'$'+i[1] for i in zip(self.ligands, self.receptors)], 
-                index=self.adata.obs.index
-            )
 
-        else:
-            self.lr_exp = self.adata.uns['ligand_receptor'].values
-            assert self.lr_exp.shape[0] == self.adata.shape[0]
-            assert self.lr_exp.shape[1] == len(self.ligands) == len(self.receptors)
+        received_ligands = self.adata.uns['received_ligands'][self.ligands].values
+        receptor_expression = self.adata.to_df(layer=self.layer)[self.receptors].values
+
+        self.lr_exp  = received_ligands * receptor_expression
+        
+        self.adata.uns['ligand_receptor'] = pd.DataFrame(
+            self.lr_exp, 
+            columns=[i[0]+'$'+i[1] for i in zip(self.ligands, self.receptors)], 
+            index=self.adata.obs.index
+        )
+
+        assert self.lr_exp.shape[0] == self.adata.shape[0]
+        assert self.lr_exp.shape[1] == len(self.ligands) == len(self.receptors)
 
 
 

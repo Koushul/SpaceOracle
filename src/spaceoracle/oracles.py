@@ -23,7 +23,7 @@ from sklearn.decomposition import PCA
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -121,15 +121,7 @@ class Oracle(ABC):
 @dataclass
 class BetaOutput:
     betas: np.ndarray
-    modulators: List[str]
-    regulators: List[str]
-    ligands: List[str]
-    receptors: List[str]
-    target_gene: str
-    target_gene_index: int
-    regulators_index: List[int]
-    ligands_index: List[int]
-    receptors_index: List[int]
+    modulator_gene_indices: List[int]
 
 
 class OracleQueue:
@@ -313,6 +305,7 @@ class SpaceOracle(Oracle):
                     mode='train_test',
                     rotate_maps=self.rotate_maps,
                     alpha=self.alpha,
+                    parallel=False,
                     pbar=train_bar
                 )
 
@@ -400,19 +393,17 @@ class SpaceOracle(Oracle):
         lr_pairs = [i for i in all_modulators if '$' in i]
         ligands = [i.split('$')[0] for i in lr_pairs]
         receptors = [i.split('$')[1] for i in lr_pairs]
+        
+        modulator_gene_indices = [self.gene2index[m] for m in tfs] + \
+            [self.gene2index[m] for m in ligands] + \
+            [self.gene2index[m] for m in receptors]
+
+        assert len(modulator_gene_indices) == len(beta_columns)
+        assert len(tfs)+len(ligands)+len(receptors) == len(modulator_gene_indices)
 
         return BetaOutput(
-            all_betas=betadata[['beta0']+beta_columns].values,
-            tf_betas=betadata[[i for i in beta_columns if '$' not in i]].values,
-            modulators=all_modulators,
-            regulators=tfs,
-            ligands=ligands,
-            receptors=receptors,
-            target_gene=target_gene,
-            target_gene_index=self.gene2index[target_gene],
-            regulators_index=[self.gene2index[m] for m in tfs],
-            ligands_index=[self.gene2index[m] for m in ligands],
-            receptors_index=[self.gene2index[m] for m in receptors]
+            betas=betadata[['beta0']+beta_columns].values,
+            modulator_gene_indices=modulator_gene_indices,
         )
 
 
@@ -426,6 +417,7 @@ class SpaceOracle(Oracle):
         return beta_dict
     
     def _get_gene_gene_matrix(self, cell_index):
+        ## do we need this function?
         genes = self.adata.var_names
         gene_gene_matrix = np.zeros((len(genes), len(genes)))
 
@@ -433,7 +425,7 @@ class SpaceOracle(Oracle):
             _beta_out = self.beta_dict.get(gene, None)
             
             if _beta_out is not None:
-                r = np.array(_beta_out.regulators_index)
+                r = np.array(_beta_out.modulator_gene_indices)
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
         return gene_gene_matrix
@@ -449,7 +441,7 @@ class SpaceOracle(Oracle):
             _beta_out = betas_dict.get(gene, None)
             
             if _beta_out is not None:
-                r = np.array(_beta_out.regulators_index)
+                r = np.array(_beta_out.modulator_gene_indices)
                 gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)

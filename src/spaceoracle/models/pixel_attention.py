@@ -120,7 +120,7 @@ class NicheAttentionNetwork(nn.Module):
         self.out_channels = in_channels
         self.spatial_dim = spatial_dim
         self.dim = n_regulators+1
-        # self.conditional_conv = ConditionalConv2D(self.in_channels, self.in_channels, 1)
+        # self.conditional_conv = ConditionalConv2D(self.in_channels, self.in_channels, 1, num_experts=self.in_channels)
         self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
 
         self.sigmoid = nn.Sigmoid()
@@ -150,7 +150,7 @@ class NicheAttentionNetwork(nn.Module):
             nn.Linear(64, self.dim)
         )
 
-        self.alpha = nn.Parameter(torch.tensor(0.0), requires_grad=True)
+        self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
         self.output_activation = nn.Tanh()
 

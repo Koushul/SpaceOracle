@@ -23,7 +23,7 @@ from .vit_blocks import ViT
 from ..tools.utils import set_seed, seed_worker, deprecated
 from ..tools.data import SpaceOracleDataset
 from ..tools.network import GeneRegulatoryNetwork, DayThreeRegulatoryNetwork, SurveyRegulatoryNetwork
-
+from ..tools.network import expand_paired_interactions
 set_seed(42)
 
 
@@ -156,10 +156,11 @@ class VisionEstimator(AbstractEstimator):
             
             df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']
 
-        self.lr = df_ligrec
+        self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(adata.var_names) & (self.lr.receptor.isin(adata.var_names))]
 
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
+        self.lr = self.lr.drop_duplicates(subset='pairs', keep='first')
         self.ligands = list(self.lr.ligand.values)
         self.receptors = list(self.lr.receptor.values)
         self.n_clusters = len(self.adata.obs[annot].unique())

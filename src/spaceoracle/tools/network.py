@@ -6,6 +6,23 @@ import os
 import json 
 import torch
 
+def expand_paired_interactions(df):
+    expanded_rows = []
+    for _, row in df.iterrows():
+        ligands = row['ligand'].split('_')
+        receptors = row['receptor'].split('_')
+        
+        for ligand in ligands:
+            for receptor in receptors:
+                new_row = row.copy()
+                new_row['ligand'] = ligand
+                new_row['receptor'] = receptor
+                expanded_rows.append(new_row)
+    
+    df = pd.DataFrame(expanded_rows)
+    
+    return df
+
 class GeneRegulatoryNetwork:
     def __init__(self, organism='mouse'):
         if organism == 'mouse':

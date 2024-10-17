@@ -5,8 +5,6 @@ import pandas as pd
 import anndata
 import os
 import sys
-
-
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 import tempfile
 import shutil
@@ -40,6 +38,7 @@ def generate_realistic_data(noise_level=0.1):
     adata.layers['normalized_count'] = adata.layers['imputed_count'].copy()
 
     return adata
+
 
 @pytest.fixture
 def mock_adata_with_true_betas():
