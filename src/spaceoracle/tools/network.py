@@ -162,7 +162,7 @@ class DayThreeRegulatoryNetwork(CellOracleLinks):
         self.base_pth = os.path.join(
                 os.path.dirname(__file__), '..', '..', '..', 'data')
 
-        with open(self.base_pth+'/slideseq/celloracle_links.pkl', 'rb') as f:
+        with open(self.base_pth+'/slideseq/celloracle_links_day3_1.pkl', 'rb') as f:
             self.links = pickle.load(f)
 
         self.annot = 'rctd_cluster'
