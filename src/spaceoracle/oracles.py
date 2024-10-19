@@ -445,14 +445,15 @@ class SpaceOracle(Oracle):
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, gene_mtx, target, n_propagation=3):
+    def perturb(self, target, n_propagation=3, gene_expr=0):
         assert target in self.adata.var_names
 
         target_index = self.gene2index[target]  
+        gene_mtx = self.adata.layers['imputed_count']
         simulation_input = gene_mtx.copy()
 
-        simulation_input[:, target_index] = 0 # ko target gene
-        delta_input = simulation_input - gene_mtx # get delta X
+        simulation_input[:, target_index] = gene_expr   # ko target gene
+        delta_input = simulation_input - gene_mtx       # get delta X
         delta_simulated = delta_input.copy() 
 
         if self.beta_dict is None:
@@ -472,6 +473,15 @@ class SpaceOracle(Oracle):
         gem_simulated = gene_mtx + delta_simulated
         
         assert gem_simulated.shape == gene_mtx.shape
+
+        # just as in CellOracle, don't allow simulated to exceed observed values
+        imputed_count = gene_mtx
+        min_ = imputed_count.min(axis=0)
+        max_ = imputed_count.max(axis=0)
+        gem_simulated = pd.DataFrame(gem_simulated).clip(lower=min_, upper=max_, axis=1).values
+
+        self.adata.layers['simulated_count'] = gem_simulated
+        self.adata.layers['delta_X'] = gem_simulated - imputed_count
 
         return gem_simulated
 
@@ -582,43 +592,3 @@ class SpaceOracle(Oracle):
         return gem_simulated
 
 
-
-# def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
-#     """Calculate a nearest neighbour distance matrix
-
-#     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
-#     To achieve that we call kneighbors_graph with X = None
-#     """
-#     if metric == "correlation":
-#         nn = NearestNeighbors(
-#             n_neighbors=k, metric="correlation", 
-#             algorithm="brute", n_jobs=n_jobs)
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-#     else:
-#         nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-
-
-# def connectivity_to_weights(mknn, axis=1):
-#     if type(mknn) is not sparse.csr_matrix:
-#         mknn = mknn.tocsr()
-#     return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
-
-# def convolve_by_sparse_weights(data, w):
-#     w_ = w.T
-#     assert np.allclose(w_.sum(0), 1)
-#     return sparse.csr_matrix.dot(data, w_)
-
-
-# def _adata_to_matrix(adata, layer_name, transpose=True):
-#     if isinstance(adata.layers[layer_name], np.ndarray):
-#         matrix = adata.layers[layer_name].copy()
-#     else:
-#         matrix = adata.layers[layer_name].todense().A.copy()
-
-#     if transpose:
-#         matrix = matrix.transpose()
-
-#     return matrix.copy(order="C")
