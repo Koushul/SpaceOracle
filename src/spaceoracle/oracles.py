@@ -445,11 +445,17 @@ class SpaceOracle(Oracle):
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, target, n_propagation=3, gene_expr=0):
+    def perturb(self, gene_mtx=None, target=None, n_propagation=3, gene_expr=0):
         assert target in self.adata.var_names
+        
+        if gene_mtx is None: 
+            gene_mtx = self.adata.layers['imputed_count']
+
+        # clear downstream analyses
+        for key in ['transition_probabilities', 'grid_points', 'vector_field']:
+            self.adata.uns.pop(key, None)
 
         target_index = self.gene2index[target]  
-        gene_mtx = self.adata.layers['imputed_count']
         simulation_input = gene_mtx.copy()
 
         simulation_input[:, target_index] = gene_expr   # ko target gene
