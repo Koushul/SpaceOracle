@@ -431,7 +431,7 @@ class SpaceOracle(Oracle):
         modulator_gene_indices = [self.gene2index[m] for m in tfs] + \
             [self.gene2index[m] for m in ligands] + \
             [self.gene2index[m] for m in receptors]
-
+        
         assert len(modulator_gene_indices) == len(beta_columns)
         assert len(tfs)+len(ligands)+len(receptors) == len(modulator_gene_indices)
 
