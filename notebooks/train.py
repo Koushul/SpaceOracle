@@ -11,16 +11,15 @@ pyro.clear_param_store()
 adata_train = sc.read_h5ad(
     '/ihome/ylee/kor11/space/SpaceOracle/notebooks/cache/adata_train.h5ad')
 
-del adata_train.obsm['spatial_maps']
 
 so = spaceoracle.SpaceOracle(
     adata=adata_train,
     annot='rctd_cluster', 
-    max_epochs=10, 
-    learning_rate=7e-4, 
+    max_epochs=7, 
+    learning_rate=3e-4, 
     spatial_dim=64,
     batch_size=512,
-    alpha=0.1,
+    alpha=0.9,
 )
 
 so.run()

@@ -29,6 +29,7 @@ from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
+from .models.parallel_estimators import SpatialCellularProgramsEstimator
 
 from .tools.utils import (
     CPU_Unpickler,
@@ -168,33 +169,42 @@ class OracleQueue:
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         completed_paths = glob.glob(f'{self.model_dir}/*.csv')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
+        orphan_paths = glob.glob(f'{self.model_dir}/*.orphan')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
-        locked_genes = list(filter(None, map(self.extract_gene_name_from_lock, locked_paths)))
-        return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes)))
+        locked_genes = list(filter(None, map(self.extract_gene_name, locked_paths)))
+        orphan_genes = list(filter(None, map(self.extract_gene_name, orphan_paths)))
+        return list(set(self.regulated_genes).difference(set(completed_genes+locked_genes+orphan_genes)))
 
     def create_lock(self, gene):
         # assert not os.path.exists(f'{self.model_dir}/{gene}.lock')
         now = str(datetime.datetime.now())
+        pid = os.getpid()
         with open(f'{self.model_dir}/{gene}.lock', 'w') as f:
-            f.write(now)
+            f.write(f'{now} {pid}')
 
     def delete_lock(self, gene):
         assert os.path.exists(f'{self.model_dir}/{gene}.lock')
         os.remove(f'{self.model_dir}/{gene}.lock')
 
     def add_orphan(self, gene):
+        now = str(datetime.datetime.now())
+        pid = os.getpid()
+        with open(f'{self.model_dir}/{gene}.orphan', 'w') as f:
+            f.write(f'{now} {pid}')
         self.orphans.append(gene)
 
     @staticmethod
     def extract_gene_name(path):
-        # match = re.search(r'([^/]+)_estimator\.pkl$', path)
-        match = re.search(r'([^/]+)_betadata\.csv$', path)
-        return match.group(1) if match else None
-    
-    @staticmethod
-    def extract_gene_name_from_lock(path):
-        match = re.search(r'([^/]+)\.lock$', path)
-        return match.group(1) if match else None
+        patterns = {
+            'betadata': r'([^/]+)_betadata\.csv$',
+            'lock': r'([^/]+)\.lock$',
+            'orphan': r'([^/]+)\.orphan$'
+        }
+        for pattern in patterns.values():
+            match = re.search(pattern, path)
+            if match:
+                return match.group(1)
+        return None
     
 
     def __str__(self):
@@ -209,7 +219,7 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05, test_mode=False):
+    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -225,17 +235,17 @@ class SpaceOracle(Oracle):
         self.rotate_maps = rotate_maps
         self.layer = layer
         self.alpha = alpha
+        self.threshold_lambda = threshold_lambda
         self.test_mode = test_mode
         self.beta_dict = None
         self.coef_matrix = None
 
-        if 'spatial_maps' not in self.adata.obsm:
-            self.imbue_adata_with_space(
-                self.adata, 
-                annot=self.annot,
-                spatial_dim=self.spatial_dim,
-                in_place=True
-            )
+        # self.imbue_adata_with_space(
+        #     self.adata, 
+        #     annot=self.annot,
+        #     spatial_dim=self.spatial_dim,
+        #     in_place=True
+        # )
 
         self.estimator_models = {}
         self.regulators = {}
@@ -250,18 +260,25 @@ class SpaceOracle(Oracle):
 
         gene_bar = _manager.counter(
             total=len(self.queue.all_genes), 
-            desc='Estimating betas', 
+            desc=f'... initializing ...', 
             unit='genes',
             color='green',
             autorefresh=True,
         )
 
+        # train_bar = _manager.counter(
+        #     total=self.max_epochs, 
+        #     desc='Training', 
+        #     unit='epochs',
+        #     color='red',
+        #     autorefresh=True,
+        # )
+
         train_bar = _manager.counter(
-            total=self.max_epochs, 
-            desc='Training', 
-            unit='epochs',
+            total=self.adata.shape[0]*self.max_epochs, 
+            desc=f'Ready...', unit='cells',
             color='red',
-            autorefresh=True,
+            auto_refresh=True
         )
 
 
@@ -276,9 +293,18 @@ class SpaceOracle(Oracle):
             # estimator = ProbabilisticPixelAttention(
             #     self.adata, target_gene=gene, layer=self.layer)
 
-            estimator = ProbabilisticPixelModulators(
-                self.adata, target_gene=gene, layer=self.layer,
-                annot=self.annot)
+            # estimator = ProbabilisticPixelModulators(
+            #     self.adata, target_gene=gene, layer=self.layer,
+            #     annot=self.annot)
+            
+            estimator = SpatialCellularProgramsEstimator(
+                adata=self.adata,
+                target_gene=gene,
+                layer=self.layer,
+                cluster_annot=self.annot,
+                spatial_dim=self.spatial_dim,
+                radius=300,
+            )
             
             estimator.test_mode = self.test_mode
             
@@ -296,23 +322,33 @@ class SpaceOracle(Oracle):
 
                 self.queue.create_lock(gene)
 
+                # estimator.fit(
+                #     annot=self.annot, 
+                #     max_epochs=self.max_epochs, 
+                #     learning_rate=self.learning_rate, 
+                #     spatial_dim=self.spatial_dim,
+                #     batch_size=self.batch_size,
+                #     mode='train_test',
+                #     rotate_maps=self.rotate_maps,
+                #     alpha=self.alpha,
+                #     parallel=False,
+                #     pbar=train_bar
+                # )
+
+
                 estimator.fit(
-                    annot=self.annot, 
-                    max_epochs=self.max_epochs, 
-                    learning_rate=self.learning_rate, 
-                    spatial_dim=self.spatial_dim,
+                    num_epochs=self.max_epochs, 
+                    threshold_lambda=self.threshold_lambda, 
+                    learning_rate=self.learning_rate,
                     batch_size=self.batch_size,
-                    mode='train_test',
-                    rotate_maps=self.rotate_maps,
-                    alpha=self.alpha,
-                    parallel=False,
                     pbar=train_bar
                 )
 
                 estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
 
-                (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
-                assert target_gene == gene
+
+                # (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
+                # assert target_gene == gene
 
                 # with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
                 #     pickle.dump(
@@ -325,9 +361,8 @@ class SpaceOracle(Oracle):
                 #         f
                 #     )
 
-                self.trained_genes.append(target_gene)
+                self.trained_genes.append(gene)
                 self.queue.delete_lock(gene)
-                del model
 
             gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
             gene_bar.refresh()
@@ -386,7 +421,7 @@ class SpaceOracle(Oracle):
 
     def _get_betas(self, target_gene):
         betadata = self.load_betadata(target_gene, self.save_dir)
-        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
+        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_' and '$' not in i]
         all_modulators = [i.replace('beta_', '') for i in beta_columns]
         tfs = [i for i in all_modulators if '$' not in i]
         lr_pairs = [i for i in all_modulators if '$' in i]
@@ -396,7 +431,7 @@ class SpaceOracle(Oracle):
         modulator_gene_indices = [self.gene2index[m] for m in tfs] + \
             [self.gene2index[m] for m in ligands] + \
             [self.gene2index[m] for m in receptors]
-
+        
         assert len(modulator_gene_indices) == len(beta_columns)
         assert len(tfs)+len(ligands)+len(receptors) == len(modulator_gene_indices)
 

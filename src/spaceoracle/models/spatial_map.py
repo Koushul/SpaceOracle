@@ -113,7 +113,7 @@ def xyc2spatial_fast(xyc, m, n):
     Return (n_samples, n_clusters, m, n)
     """
 
-    print(f'🌍️ Generating spatial {m}x{n} maps...*')
+    # print(f'🌍️ Generating spatial {m}x{n} maps...*')
 
     x, y, c = xyc[:, 0], xyc[:, 1], xyc[:, 2]
     xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)
@@ -123,8 +123,8 @@ def xyc2spatial_fast(xyc, m, n):
     num_clusters = len(clusters)
     
     spatial_maps = np.zeros((len(xyc), num_clusters, m, n), dtype=np.float32)
-    mask = np.zeros((num_clusters, m, n), dtype=np.float32)
-    # mask = np.ones((num_clusters, m, n), dtype=np.float32) * np.inf
+    # mask = np.zeros((num_clusters, m, n), dtype=np.float32)
+    mask = np.ones((num_clusters, m, n), dtype=np.float32)
 
     
     for s in prange(len(xyc)):
@@ -144,9 +144,26 @@ def xyc2spatial_fast(xyc, m, n):
         for i in range(num_clusters):
             for j in range(m):
                 for k in range(n):
-                    channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
-                    # channel_wise_maps[s, i, j, k] = spatial_maps[s, i, j, k] * mask[i, j, k]
+                    # channel_wise_maps[s, i, j, k] = (max_val / spatial_maps[s, i, j, k]) * mask[i, j, k]
+                    channel_wise_maps[s, i, j, k] = spatial_maps[s, i, j, k] * mask[i, j, k]
+
+
+
+    min_vals = np.zeros((len(xyc), num_clusters, 1, 1), dtype=np.float32)
+    max_vals = np.zeros((len(xyc), num_clusters, 1, 1), dtype=np.float32)
+    for s in prange(len(xyc)):
+        for i in range(num_clusters):
+            min_vals[s, i, 0, 0] = np.min(channel_wise_maps[s, i])
+            max_vals[s, i, 0, 0] = np.max(channel_wise_maps[s, i])
+    
+    denominator = np.maximum(max_vals - min_vals, 1e-15)
+    channel_wise_maps_norm = np.zeros_like(channel_wise_maps)
+    for s in prange(len(xyc)):
+        for i in range(num_clusters):
+            for j in range(m):
+                for k in range(n):
+                    channel_wise_maps_norm[s, i, j, k] = (channel_wise_maps[s, i, j, k] - min_vals[s, i, 0, 0]) / denominator[s, i, 0, 0]
 
 
     # channel_wise_maps = 1.0/channel_wise_maps
-    return channel_wise_maps
+    return channel_wise_maps_norm
