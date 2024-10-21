@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from sklearn.linear_model import ARDRegression 
 from spaceoracle.models.spatial_map import xyc2spatial_fast
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork, expand_paired_interactions
@@ -36,6 +36,29 @@ elif torch.cuda.is_available():
     device = torch.device("cuda")
 else:
     device = torch.device("cpu")
+
+
+class RotatedTensorDataset(Dataset):
+    def __init__(self, sp_maps, X_cell, y_cell, cluster, rotate_maps=True):
+        self.sp_maps = sp_maps
+        self.X_cell = X_cell
+        self.y_cell = y_cell
+        self.cluster = cluster
+        self.rotate_maps = rotate_maps
+
+    def __len__(self):
+        return len(self.X_cell)
+
+    def __getitem__(self, idx):
+        sp_map = self.sp_maps[idx, self.cluster:self.cluster+1, :, :]
+        if self.rotate_maps:
+            k = np.random.choice([0, 1, 2, 3])
+            sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
+        return (
+            torch.from_numpy(sp_map.copy()).float(),
+            torch.from_numpy(self.X_cell[idx]).float(),
+            torch.from_numpy(np.array(self.y_cell[idx])).float()
+        )
 
 class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, cluster_annot='rctd_cluster', layer='imputed_count', radius=200):
@@ -75,7 +98,7 @@ class SpatialCellularProgramsEstimator:
             )
             
         df_ligrec.columns = ['ligand', 'receptor', 'pathway', 'signaling']  
-        
+
         self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(self.adata.var_names) & (self.lr.receptor.isin(self.adata.var_names))]
         self.lr = self.lr[~((self.lr.receptor == self.target_gene) | (self.lr.ligand == self.target_gene))]
@@ -84,64 +107,7 @@ class SpatialCellularProgramsEstimator:
         self.ligands = list(self.lr.ligand.values)
         self.receptors = list(self.lr.receptor.values)
 
-    @property
-    def betadata(self):
-        all_betas = self.get_betas(
-            spatial_maps=np.array(self.adata.obsm['spatial_maps']),
-            labels=np.array(self.adata.obs[self.annot])
-        )
-        
-        betas_df = pd.DataFrame(all_betas, index=self.adata.obs.index)
-        betas_df.columns = ['beta0'] + ['beta_'+i for i in self.is_real.index]
-
-        # The rest of the method remains the same as before
-        gex_df = self.adata.to_df(layer=self.layer)
-        received_ligands = self.adata.uns['received_ligands']
-
-        gex_df = pd.DataFrame(
-            MinMaxScaler().fit_transform(gex_df),
-            columns=gex_df.columns,
-            index=gex_df.index
-        )
-
-        received_ligands = pd.DataFrame(
-            MinMaxScaler().fit_transform(received_ligands),
-            columns=received_ligands.columns,
-            index=received_ligands.index
-        )
-
-        b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
-        b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
-
-        ligand_betas = pd.DataFrame(
-            [b_ligand(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
-        
-        receptor_betas = pd.DataFrame(
-            [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
-        
-        ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
-        receptor_betas = receptor_betas.groupby(lambda x: x, axis=1).sum()
-
-        xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
-        gex_modulators = self.regulators+self.ligands+self.receptors+[self.target_gene]
-        
-        _data = betas_df \
-            .join(gex_df[np.unique(gex_modulators)]) \
-            .join(self.adata.uns['ligand_receptor']) \
-            .join(ligand_betas) \
-            .join(receptor_betas) \
-            .join(self.adata.obs) \
-            .join(xy)
-        
-        inputs_x = _data[self.regulators+list(self.lr['pairs'])].values
-        betas = _data[[f'beta_{i}' for i in self.regulators+list(self.lr['pairs'])]].values
-        y_pred = _data['beta0'].values
-        for i in range(inputs_x.shape[1]):
-            y_pred += inputs_x[:, i] * betas[:, i]
-        _data[f'target_{self.target_gene}'] = y_pred
-        return _data
+        assert len(self.ligands) == len(self.receptors)
 
     def received_ligands(self, xy, lig_df, radius=200):
         ligands = lig_df.columns
@@ -182,16 +148,20 @@ class SpatialCellularProgramsEstimator:
         )
 
     def init_data(self):
-        self.adata.uns['received_ligands'] = self.received_ligands(
-            self.adata.obsm['spatial'], 
-            self.adata.to_df(layer=self.layer)[np.unique(self.ligands)], 
-            radius=self.radius,
-        )
+        if len(self.lr['pairs']) > 0:
+            self.adata.uns['received_ligands'] = self.received_ligands(
+                self.adata.obsm['spatial'], 
+                self.adata.to_df(layer=self.layer)[np.unique(self.ligands)], 
+                radius=self.radius,
+            )
 
-        self.adata.uns['ligand_receptor'] = self.ligands_receptors_interactions(
-            self.adata.uns['received_ligands'][self.ligands], 
-            self.adata.to_df(layer=self.layer)[self.receptors]
-        )
+            self.adata.uns['ligand_receptor'] = self.ligands_receptors_interactions(
+                self.adata.uns['received_ligands'][self.ligands], 
+                self.adata.to_df(layer=self.layer)[self.receptors]
+            )
+        else:
+            self.adata.uns['received_ligands'] = pd.DataFrame(index=self.adata.obs.index)
+            self.adata.uns['ligand_receptor'] = pd.DataFrame(index=self.adata.obs.index)
         
         self.xy = np.array(self.adata.obsm['spatial'])
         cluster_labels = np.array(self.adata.obs[self.cluster_annot])
@@ -253,11 +223,13 @@ class SpatialCellularProgramsEstimator:
             index=gex_df.index
         )
 
-        received_ligands = pd.DataFrame(
-            MinMaxScaler().fit_transform(received_ligands),
-            columns=received_ligands.columns,
-            index=received_ligands.index
-        )
+        if received_ligands.shape[1] > 0:
+            received_ligands = pd.DataFrame(
+                MinMaxScaler().fit_transform(received_ligands),
+                columns=received_ligands.columns,
+                index=received_ligands.index
+            )
+            
 
         betas_df = self.get_betas()
 
@@ -326,7 +298,7 @@ class SpatialCellularProgramsEstimator:
         return _data
 
 
-    def fit(self, num_epochs=10, threshold_lambda=1e4):
+    def fit(self, num_epochs=10, threshold_lambda=1e4, learning_rate=2e-4, batch_size=512, pbar=None):
 
         sp_maps, X, y, cluster_labels = self.init_data()
 
@@ -337,13 +309,14 @@ class SpatialCellularProgramsEstimator:
         self.cell_indices = self.adata.obs.index
         self.cluster_labels = cluster_labels
 
-        manager = enlighten.get_manager()
-        pbar = manager.counter(
-            total=sp_maps.shape[0]*num_epochs, 
-            desc='Estimating Spatial Betas', unit='cells',
-            color='green',
-            auto_refresh=True
-        )
+        if pbar is None:
+            manager = enlighten.get_manager()
+            pbar = manager.counter(
+                total=sp_maps.shape[0]*num_epochs, 
+                desc='Estimating Spatial Betas', unit='cells',
+                color='green',
+                auto_refresh=True
+            )
         
         for cluster in np.unique(cluster_labels):
             mask = cluster_labels == cluster
@@ -355,13 +328,17 @@ class SpatialCellularProgramsEstimator:
             r2_ard = r2_score(y_cell, y_pred)
             _betas = np.hstack([m.intercept_, m.coef_])
 
+            
+
             loader = DataLoader(
-                TensorDataset(
-                    torch.from_numpy(sp_maps[mask][:, cluster:cluster+1, :, :]).float(), 
-                    torch.from_numpy(X_cell).float(), 
-                    torch.from_numpy(y_cell).float()
-                ), 
-                batch_size=512, shuffle=True
+                RotatedTensorDataset(
+                    sp_maps[mask],
+                    X_cell,
+                    y_cell,
+                    cluster,
+                    rotate_maps=True
+                ),
+                batch_size=batch_size, shuffle=True
             )
 
             model = CellularNicheNetwork(
@@ -371,7 +348,7 @@ class SpatialCellularProgramsEstimator:
             ).to(self.device)
 
             criterion = torch.nn.MSELoss()
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
             
             for epoch in range(num_epochs):
@@ -392,8 +369,9 @@ class SpatialCellularProgramsEstimator:
                     epoch_loss += loss.item()
                     all_y_true.extend(targets.cpu().detach().numpy())
                     all_y_pred.extend(outputs.cpu().detach().numpy())
-                    
+                    # pbar.desc = f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}'
+                    pbar.desc = f'{self.target_gene} | {cluster}/{self.n_clusters}'
                     pbar.update(len(targets))
 
-            print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
+            # print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
             self.models[cluster] = model

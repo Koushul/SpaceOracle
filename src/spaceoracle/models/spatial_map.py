@@ -113,7 +113,7 @@ def xyc2spatial_fast(xyc, m, n):
     Return (n_samples, n_clusters, m, n)
     """
 
-    print(f'🌍️ Generating spatial {m}x{n} maps...*')
+    # print(f'🌍️ Generating spatial {m}x{n} maps...*')
 
     x, y, c = xyc[:, 0], xyc[:, 1], xyc[:, 2]
     xmin, xmax, ymin, ymax = np.min(x), np.max(x), np.min(y), np.max(y)

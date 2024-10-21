@@ -4,6 +4,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
 from torch.nn.parameter import Parameter
 import torch.nn as nn
+import numpy as np
 import torch    
 import functools
 from torch.nn.utils.parametrizations import weight_norm
@@ -164,7 +165,6 @@ class NicheAttentionNetwork(nn.Module):
 
         return betas
     
-import numpy as np
 
 class CellularNicheNetwork(nn.Module):
      
@@ -179,9 +179,9 @@ class CellularNicheNetwork(nn.Module):
 
         self.anchors = torch.from_numpy(anchors).float().to(device)
 
-        self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
-
-        self.sigmoid = nn.Sigmoid()
+        # self.anchors = torch.nn.Parameter(self.anchors, requires_grad=True)
+        # self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
+        # self.sigmoid = nn.Sigmoid()
 
         self.conv_layers = nn.Sequential(
             weight_norm(nn.Conv2d(self.in_channels, 32, kernel_size=3, padding='same')),
@@ -201,19 +201,20 @@ class CellularNicheNetwork(nn.Module):
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(128, 128),
             nn.PReLU(init=0.1),
-            nn.Linear(64, self.dim)
+            nn.Linear(128, self.dim)
         )
 
         # self.output_activation = nn.Tanh()
         self.output_activation = nn.Sigmoid()
+        # self.output_activation = nn.GELU()
+
+        self.anchors[0] = 1
 
 
     def get_betas(self, spatial_maps):
-        att = self.sigmoid(self.conditional_conv(spatial_maps))
-        out = att * spatial_maps
-        out = self.conv_layers(out)
+        out = self.conv_layers(spatial_maps)
         betas = self.mlp(out)
         betas = self.output_activation(betas)
 

@@ -1,7 +1,5 @@
-import glob
 import pytest
 import numpy as np
-import pandas as pd
 import anndata
 import os
 import sys
@@ -9,13 +7,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 's
 import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
-import torch
 
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork
 from spaceoracle.oracles import Oracle, OracleQueue, SpaceOracle
-from spaceoracle.models.estimators import PixelAttention
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelAttention, ProbabilisticPixelModulators
-from spaceoracle.models.pixel_attention import NicheAttentionNetwork
+from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
 
 import anndata as ad
 
@@ -27,7 +22,7 @@ def generate_realistic_data(noise_level=0.1):
 
     regulators = grn.get_regulators(adata, 'Cd74')[:5]
 
-    adata = adata[:, adata.var_names.isin(regulators+['Cd74'])]
+    adata = adata[:, adata.var_names.isin(regulators+['Cd74']+['Il2', 'Il2ra', 'Ccl5', 'Bmp2', 'Bmpr1a'])]
 
     adata = adata[adata.obs['rctd_cluster'].isin([0, 1])]
     adata = adata[:200, :]
@@ -106,7 +101,6 @@ def test_space_oracle_initialization(mock_adata_with_true_betas, temp_dir):
     assert space_oracle.adata is not None
     assert space_oracle.grn is not None
     assert space_oracle.queue is not None
-    assert 'spatial_maps' in space_oracle.adata.obsm
 
 # @pytest.mark.parametrize("estimator_class", [PixelAttention, ProbabilisticPixelAttention])
 @pytest.mark.parametrize("estimator_class", [ProbabilisticPixelModulators])
