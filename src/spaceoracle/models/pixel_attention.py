@@ -1,17 +1,15 @@
 import pyro
-from pyro.infer import Predictive
-from pyro.infer.autoguide import AutoDiagonalNormal
-from pyro.nn import PyroModule
-from pysal.model.spreg import OLS
 import torch.nn.functional as F
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
 from torch.nn.parameter import Parameter
 import torch.nn as nn
+import numpy as np
 import torch    
 import functools
 from torch.nn.utils.parametrizations import weight_norm
-from torch.distributions import Normal, Gamma
+from sklearn.linear_model import ARDRegression
+
 pyro.clear_param_store()
 
 device = torch.device(
@@ -111,7 +109,6 @@ class ConditionalConv2D(_ConvNd):
     
 
 
-
 class NicheAttentionNetwork(nn.Module):
      
     def __init__(self, n_regulators, in_channels, spatial_dim):
@@ -142,7 +139,7 @@ class NicheAttentionNetwork(nn.Module):
             nn.Flatten()
         )
 
-        self.cluster_emb = nn.Embedding(self.in_channels, 128)
+        # self.cluster_emb = nn.Embedding(self.in_channels, 128)
 
         self.mlp = nn.Sequential(
             nn.Linear(128, 64),
@@ -150,7 +147,7 @@ class NicheAttentionNetwork(nn.Module):
             nn.Linear(64, self.dim)
         )
 
-        self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        # self.alpha = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
         self.output_activation = nn.Tanh()
 
@@ -160,10 +157,79 @@ class NicheAttentionNetwork(nn.Module):
         att = self.sigmoid(self.conditional_conv(spatial_maps))
         out = att * spatial_maps
         out = self.conv_layers(out)
-        emb = self.cluster_emb(cluster_info) * self.alpha
-        out = out + emb 
+        # emb = self.cluster_emb(cluster_info) * self.alpha
+        # out = out + emb 
 
         betas = self.mlp(out)
         betas = self.output_activation(betas)
 
         return betas
+    
+
+class CellularNicheNetwork(nn.Module):
+     
+    def __init__(self, n_modulators, anchors=None, spatial_dim=64):
+        super().__init__()
+        self.in_channels = 1
+        self.out_channels = 1
+        self.spatial_dim = spatial_dim
+        self.dim = n_modulators+1
+        if anchors is None:
+            anchors = np.ones(self.dim)
+
+        self.anchors = torch.from_numpy(anchors).float().to(device)
+
+        # self.anchors = torch.nn.Parameter(self.anchors, requires_grad=True)
+        # self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
+        # self.sigmoid = nn.Sigmoid()
+
+        self.conv_layers = nn.Sequential(
+            weight_norm(nn.Conv2d(self.in_channels, 32, kernel_size=3, padding='same')),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            weight_norm(nn.Conv2d(32, 64, kernel_size=3, padding='same')),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            weight_norm(nn.Conv2d(64, 128, kernel_size=3, padding='same')),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten()
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.PReLU(init=0.1),
+            nn.Linear(128, self.dim)
+        )
+
+        # self.output_activation = nn.Tanh()
+        self.output_activation = nn.Sigmoid()
+        # self.output_activation = nn.GELU()
+
+        self.anchors[0] = 1
+
+
+    def get_betas(self, spatial_maps):
+        out = self.conv_layers(spatial_maps)
+        betas = self.mlp(out)
+        betas = self.output_activation(betas)
+
+        return betas*self.anchors
+    
+    @staticmethod
+    def predict_y(inputs_x, betas):
+        return torch.matmul(
+                inputs_x.unsqueeze(1), 
+                betas[:, 1:].unsqueeze(2)
+            ).squeeze(1).squeeze(1) + \
+                betas[:, 0]
+    
+    def forward(self, spatial_maps, inputs_x):
+        betas = self.get_betas(spatial_maps)
+        y_pred = self.predict_y(inputs_x, betas)
+        
+        return y_pred
