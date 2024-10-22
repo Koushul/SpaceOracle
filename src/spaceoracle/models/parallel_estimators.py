@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from sklearn.linear_model import ARDRegression 
 from spaceoracle.models.spatial_map import xyc2spatial_fast
@@ -30,6 +30,27 @@ def calculate_weighted_ligands(gauss_weights, lig_df_values, u_ligands):
     return weighted_ligands
 
 
+from scipy.spatial.distance import cdist
+
+def create_spatial_features(x, y, celltypes, obs_index,radius=200):
+    coords = np.column_stack((x, y))
+    unique_celltypes = np.unique(celltypes)
+    result = np.zeros((len(x), len(unique_celltypes)))
+    distances = cdist(coords, coords)
+    for i, celltype in enumerate(unique_celltypes):
+        mask = celltypes == celltype
+        neighbors = (distances <= radius)[:, mask]
+        result[:, i] = np.sum(neighbors, axis=1)
+    
+    if result.shape != (len(x), len(unique_celltypes)):
+        raise ValueError(f"Unexpected result shape: {result.shape}. Expected: {(len(x), len(unique_celltypes))}")
+    
+    columns = [f'{ct}_within' for ct in unique_celltypes]
+    df = pd.DataFrame(StandardScaler().fit_transform(result), columns=columns, index=obs_index)
+    
+    return df
+
+
 if torch.backends.mps.is_available():
     device = torch.device("mps")
 elif torch.cuda.is_available():
@@ -39,11 +60,12 @@ else:
 
 
 class RotatedTensorDataset(Dataset):
-    def __init__(self, sp_maps, X_cell, y_cell, cluster, rotate_maps=True):
+    def __init__(self, sp_maps, X_cell, y_cell, cluster, spatial_features, rotate_maps=True):
         self.sp_maps = sp_maps
         self.X_cell = X_cell
         self.y_cell = y_cell
         self.cluster = cluster
+        self.spatial_features = spatial_features
         self.rotate_maps = rotate_maps
 
     def __len__(self):
@@ -54,10 +76,13 @@ class RotatedTensorDataset(Dataset):
         if self.rotate_maps:
             k = np.random.choice([0, 1, 2, 3])
             sp_map = np.rot90(sp_map, k=k, axes=(1, 2))
+
+
         return (
             torch.from_numpy(sp_map.copy()).float(),
             torch.from_numpy(self.X_cell[idx]).float(),
-            torch.from_numpy(np.array(self.y_cell[idx])).float()
+            torch.from_numpy(np.array(self.y_cell[idx])).float(),
+            torch.from_numpy(self.spatial_features[idx]).float()
         )
 
 class SpatialCellularProgramsEstimator:
@@ -185,6 +210,14 @@ class SpatialCellularProgramsEstimator:
             index=self.train_df.index
         )
 
+        self.spatial_features = create_spatial_features(
+            self.adata.obsm['spatial'][:, 0], 
+            self.adata.obsm['spatial'][:, 1], 
+            self.adata.obs[self.cluster_annot], 
+            self.adata.obs.index,
+            radius=self.radius
+        )
+
         X = self.train_df.drop(columns=[self.target_gene]).values
         y = self.train_df[self.target_gene].values
         sp_maps = self.spatial_maps
@@ -203,7 +236,11 @@ class SpatialCellularProgramsEstimator:
             indices = self.cell_indices[mask]
             index_tracker.extend(indices)
             cluster_sp_maps = torch.from_numpy(self.sp_maps[mask][:, cluster_target:cluster_target+1, :, :]).float()
-            b = self.models[cluster_target].get_betas(cluster_sp_maps.to(self.device)).cpu().numpy()
+            spf = torch.from_numpy(self.spatial_features.values[mask]).float()
+            b = self.models[cluster_target].get_betas(
+                cluster_sp_maps.to(self.device),
+                spf.to(self.device)
+            ).cpu().numpy()
             betas.extend(b)
 
         return pd.DataFrame(
@@ -299,7 +336,6 @@ class SpatialCellularProgramsEstimator:
 
 
     def fit(self, num_epochs=10, threshold_lambda=1e4, learning_rate=2e-4, batch_size=512, pbar=None):
-
         sp_maps, X, y, cluster_labels = self.init_data()
 
         self.models = {}
@@ -336,6 +372,7 @@ class SpatialCellularProgramsEstimator:
                     X_cell,
                     y_cell,
                     cluster,
+                    self.spatial_features.iloc[mask].values,
                     rotate_maps=True
                 ),
                 batch_size=batch_size, shuffle=True
@@ -344,7 +381,8 @@ class SpatialCellularProgramsEstimator:
             model = CellularNicheNetwork(
                 n_modulators = len(self.modulators), 
                 anchors=_betas,
-                spatial_dim=self.spatial_dim
+                spatial_dim=self.spatial_dim,
+                n_clusters=self.n_clusters
             ).to(self.device)
 
             criterion = torch.nn.MSELoss()
@@ -358,10 +396,10 @@ class SpatialCellularProgramsEstimator:
                 all_y_pred = []
                 
                 for batch in loader:
-                    spatial_maps, inputs, targets = [b.to(device) for b in batch]
+                    spatial_maps, inputs, targets, spatial_features = [b.to(device) for b in batch]
                     
                     optimizer.zero_grad()
-                    outputs = model(spatial_maps, inputs)
+                    outputs = model(spatial_maps, inputs, spatial_features)
                     loss = criterion(outputs, targets)
                     loss.backward()
                     optimizer.step()
@@ -370,8 +408,8 @@ class SpatialCellularProgramsEstimator:
                     all_y_true.extend(targets.cpu().detach().numpy())
                     all_y_pred.extend(outputs.cpu().detach().numpy())
                     # pbar.desc = f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}'
-                    pbar.desc = f'{self.target_gene} | {cluster}/{self.n_clusters}'
+                    pbar.desc = f'{self.target_gene} | {cluster+1}/{self.n_clusters}'
                     pbar.update(len(targets))
 
-            # print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
+            print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
             self.models[cluster] = model

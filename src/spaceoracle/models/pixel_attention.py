@@ -168,7 +168,7 @@ class NicheAttentionNetwork(nn.Module):
 
 class CellularNicheNetwork(nn.Module):
      
-    def __init__(self, n_modulators, anchors=None, spatial_dim=64):
+    def __init__(self, n_modulators, anchors=None, spatial_dim=64, n_clusters=7):
         super().__init__()
         self.in_channels = 1
         self.out_channels = 1
@@ -200,6 +200,14 @@ class CellularNicheNetwork(nn.Module):
             nn.Flatten()
         )
 
+        self.spatial_features_mlp = nn.Sequential(
+            nn.Linear(n_clusters, 32),
+            nn.PReLU(init=0.1),
+            nn.Linear(32, 64),
+            nn.PReLU(init=0.1),
+            nn.Linear(64, 128)
+        )
+
         self.mlp = nn.Sequential(
             nn.Linear(128, 128),
             nn.PReLU(init=0.1),
@@ -213,8 +221,10 @@ class CellularNicheNetwork(nn.Module):
         self.anchors[0] = 1
 
 
-    def get_betas(self, spatial_maps):
+    def get_betas(self, spatial_maps, spatial_features):
         out = self.conv_layers(spatial_maps)
+        sp_out = self.spatial_features_mlp(spatial_features)
+        out = out+sp_out
         betas = self.mlp(out)
         betas = self.output_activation(betas)
 
@@ -228,8 +238,8 @@ class CellularNicheNetwork(nn.Module):
             ).squeeze(1).squeeze(1) + \
                 betas[:, 0]
     
-    def forward(self, spatial_maps, inputs_x):
-        betas = self.get_betas(spatial_maps)
+    def forward(self, spatial_maps, inputs_x, spatial_features):
+        betas = self.get_betas(spatial_maps, spatial_features)
         y_pred = self.predict_y(inputs_x, betas)
         
         return y_pred
