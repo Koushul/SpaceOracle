@@ -165,6 +165,10 @@ class OracleQueue:
         return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
+    def num_orphans(self):
+        return len(glob.glob(f'{self.model_dir}/*.orphan'))
+    
+    @property
     def remaining_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         completed_paths = glob.glob(f'{self.model_dir}/*.csv')
@@ -303,7 +307,7 @@ class SpaceOracle(Oracle):
                 layer=self.layer,
                 cluster_annot=self.annot,
                 spatial_dim=self.spatial_dim,
-                radius=300,
+                radius=200,
             )
             
             estimator.test_mode = self.test_mode
@@ -314,7 +318,7 @@ class SpaceOracle(Oracle):
 
             else:
                 gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
-                gene_bar.desc = f'{len(self.queue.orphans)} orphans'
+                gene_bar.desc = f'{self.queue.num_orphans} orphans'
                 gene_bar.refresh()
 
                 if os.path.exists(f'{self.queue.model_dir}/{gene}.lock'):
