@@ -336,7 +336,7 @@ class SpatialCellularProgramsEstimator:
         return _data
 
 
-    def fit(self, num_epochs=10, threshold_lambda=1e4, learning_rate=2e-4, batch_size=512, pbar=None):
+    def fit(self, num_epochs=10, threshold_lambda=1e4, discard=50, learning_rate=2e-4, batch_size=512, pbar=None):
         sp_maps, X, y, cluster_labels = self.init_data()
 
         self.models = {}
@@ -359,12 +359,12 @@ class SpatialCellularProgramsEstimator:
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
 
-            groups = [1]*len(self.regulators) + [2]*len(self.ligands)
+            groups = [0]*len(self.regulators) + [1]*len(self.ligands)
             groups = np.array(groups)
 
             gl = GroupLasso(
                 groups=groups,
-                group_reg=1e-5,
+                group_reg=threshold_lambda,
                 l1_reg=0,
                 frobenius_lipschitz=True,
                 scale_reg="inverse_group_size",
@@ -381,16 +381,17 @@ class SpatialCellularProgramsEstimator:
             def threshold_coefficients(coefs, group, discard=50):
                 '''higher discard % means we set higher threshold'''
                 group_coefs = coefs[groups == group]
-                if len(group_coefs) <=0:
+                if len(group_coefs) <= 0:
                     return []
                 thresh = np.percentile(abs(group_coefs), discard)
                 return np.where(abs(group_coefs) > thresh, group_coefs, 0)
 
-            tf_coefs = threshold_coefficients(coefs, group=1)
-            lr_coefs = threshold_coefficients(coefs, group=2)
+            tf_coefs = threshold_coefficients(coefs, group=0, discard=discard)
+            lr_coefs = threshold_coefficients(coefs, group=1, discard=discard)
             _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
 
             r2_ard = r2_score(y_cell, y_pred)
+            return _betas
 
             # m = ARDRegression(threshold_lambda=threshold_lambda)
             # m.fit(X_cell, y_cell)
