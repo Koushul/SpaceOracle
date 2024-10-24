@@ -26,4 +26,5 @@ pyarrow==17.0.0
 enlighten
 pyro-ppl
 commot
+group-lasso
 # velocyto==0.17.17

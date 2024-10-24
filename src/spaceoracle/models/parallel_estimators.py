@@ -392,8 +392,6 @@ class SpatialCellularProgramsEstimator:
 
             r2_ard = r2_score(y_cell, y_pred)
 
-            return _betas
-
             # m = ARDRegression(threshold_lambda=threshold_lambda)
             # m.fit(X_cell, y_cell)
             # y_pred = m.predict(X_cell)
