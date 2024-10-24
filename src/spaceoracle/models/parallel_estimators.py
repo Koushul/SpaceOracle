@@ -8,7 +8,8 @@ import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.utils.data import DataLoader, Dataset, TensorDataset
-from sklearn.linear_model import ARDRegression 
+# from sklearn.linear_model import ARDRegression
+from group_lasso import GroupLasso
 from spaceoracle.models.spatial_map import xyc2spatial_fast
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork, expand_paired_interactions
 from .pixel_attention import CellularNicheNetwork
@@ -358,13 +359,46 @@ class SpatialCellularProgramsEstimator:
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
 
-            m = ARDRegression(threshold_lambda=threshold_lambda)
-            m.fit(X_cell, y_cell)
-            y_pred = m.predict(X_cell)
-            r2_ard = r2_score(y_cell, y_pred)
-            _betas = np.hstack([m.intercept_, m.coef_])
+            groups = [1]*len(self.regulators) + [2]*len(self.ligands)
+            groups = np.array(groups)
 
-            
+            gl = GroupLasso(
+                groups=groups,
+                group_reg=1e-5,
+                l1_reg=0,
+                frobenius_lipschitz=True,
+                scale_reg="inverse_group_size",
+                subsampling_scheme=1,
+                # supress_warning=True,
+                n_iter=1000,
+                tol=1e-3,
+            )
+            gl.fit(X_cell, y_cell)
+
+            y_pred = gl.predict(X_cell)
+            coefs = gl.coef_.flatten()
+
+            def threshold_coefficients(coefs, group, discard):
+                group_coefs = coefs[groups == group]
+                thresh = np.percentile(abs(group_coefs), discard)
+                return np.where(abs(group_coefs) > thresh, group_coefs, 0)
+
+            discard = 50  # higher ratio means discard more
+
+            tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
+            lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
+
+            _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
+
+            r2_ard = r2_score(y_cell, y_pred)
+
+            return _betas
+
+            # m = ARDRegression(threshold_lambda=threshold_lambda)
+            # m.fit(X_cell, y_cell)
+            # y_pred = m.predict(X_cell)
+            # r2_ard = r2_score(y_cell, y_pred)
+            # _betas = np.hstack([m.intercept_, m.coef_])
 
             loader = DataLoader(
                 RotatedTensorDataset(
