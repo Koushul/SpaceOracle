@@ -285,12 +285,12 @@ class SpatialCellularProgramsEstimator:
         ## dy/dR
         ligand_betas = pd.DataFrame(
             [b_ligand(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
         
         ## dy/dwL
         receptor_betas = pd.DataFrame(
             [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
         
         ## linearly combine betas for the same ligands or receptors
         ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
