@@ -359,7 +359,7 @@ class SpatialCellularProgramsEstimator:
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
 
-            groups = [0]*len(self.regulators) + [1]*len(self.ligands)
+            groups = [1]*len(self.regulators) + [2]*len(self.ligands)
             groups = np.array(groups)
 
             gl = GroupLasso(
@@ -386,8 +386,8 @@ class SpatialCellularProgramsEstimator:
                 thresh = np.percentile(abs(group_coefs), discard)
                 return np.where(abs(group_coefs) > thresh, group_coefs, 0)
 
-            tf_coefs = threshold_coefficients(coefs, group=0, discard=discard)
-            lr_coefs = threshold_coefficients(coefs, group=1, discard=discard)
+            tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
+            lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
             _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
 
             r2_ard = r2_score(y_cell, y_pred)
