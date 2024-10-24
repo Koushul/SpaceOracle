@@ -378,16 +378,14 @@ class SpatialCellularProgramsEstimator:
             y_pred = gl.predict(X_cell)
             coefs = gl.coef_.flatten()
 
-            def threshold_coefficients(coefs, group, discard):
+            def threshold_coefficients(coefs, group, discard=50):
+                '''higher discard % means we set higher threshold'''
                 group_coefs = coefs[groups == group]
                 thresh = np.percentile(abs(group_coefs), discard)
                 return np.where(abs(group_coefs) > thresh, group_coefs, 0)
 
-            discard = 50  # higher ratio means discard more
-
-            tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
-            lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
-
+            tf_coefs = threshold_coefficients(coefs, group=1)
+            lr_coefs = threshold_coefficients(coefs, group=2)
             _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
 
             r2_ard = r2_score(y_cell, y_pred)
