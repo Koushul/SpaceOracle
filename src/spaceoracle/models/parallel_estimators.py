@@ -381,6 +381,8 @@ class SpatialCellularProgramsEstimator:
             def threshold_coefficients(coefs, group, discard=50):
                 '''higher discard % means we set higher threshold'''
                 group_coefs = coefs[groups == group]
+                if len(group_coefs) <=0:
+                    return []
                 thresh = np.percentile(abs(group_coefs), discard)
                 return np.where(abs(group_coefs) > thresh, group_coefs, 0)
 
