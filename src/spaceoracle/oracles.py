@@ -66,7 +66,7 @@ class Oracle(ABC):
 
         clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def perform_PCA(adata, n_components=None, div_by_std=False):
         X = _adata_to_matrix(adata, "normalized_count")
@@ -76,13 +76,16 @@ class Oracle(ABC):
             pcs = pca.fit_transform(X.T / X.std(0))
         else:
             pcs = pca.fit_transform(X.T)
+        
+        cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+        n_comps = np.where(cumulative_variance >= 0.98)[0][0] + 1
 
-        return pcs
+        return pcs[:, :n_comps]
 
-    ## canibalized from CellOracle
+    ## cannibalized from CellOracle
     @staticmethod
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
-                       n_pca_dims=None, maximum=False,
+                       n_pca_dims=50, maximum=False,
                        balanced=False, b_sight=None, b_maxl=None,
                        group_constraint=None, n_jobs=8) -> None:
         
@@ -97,15 +100,8 @@ class Oracle(ABC):
         if b_maxl is None and balanced:
             b_maxl = int(k * 4)
 
-
+        n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
-
-        # if balanced:
-        #     bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
-        #                        metric=metric, mode="distance", n_jobs=n_jobs)
-        #     bknn.fit(space)
-        #     knn = bknn.kneighbors_graph(mode="distance")
-        # else:
 
         knn = knn_distance_matrix(space, metric=metric, k=k,
                                         mode="distance", n_jobs=n_jobs)
@@ -222,14 +218,17 @@ class OracleQueue:
 
 class SpaceOracle(Oracle):
 
-    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
+    def __init__(self, adata, save_dir='./models', annot='rctd_cluster', grn=None,
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
     layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3, tf_ligand_cutoff=0.01):
         
         super().__init__(adata)
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
-        self.save_dir = save_dir
+        if grn is None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else: 
+            self.grn = grn
 
+        self.save_dir = save_dir
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
@@ -489,14 +488,21 @@ class SpaceOracle(Oracle):
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, gene_mtx, target, n_propagation=3):
+    def perturb(self, gene_mtx=None, target=None, n_propagation=3, gene_expr=0):
         assert target in self.adata.var_names
+        
+        if gene_mtx is None: 
+            gene_mtx = self.adata.layers['imputed_count']
+
+        # clear downstream analyses
+        for key in ['transition_probabilities', 'grid_points', 'vector_field']:
+            self.adata.uns.pop(key, None)
 
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        simulation_input[:, target_index] = 0 # ko target gene
-        delta_input = simulation_input - gene_mtx # get delta X
+        simulation_input[:, target_index] = gene_expr   # ko target gene
+        delta_input = simulation_input - gene_mtx       # get delta X
         delta_simulated = delta_input.copy() 
 
         if self.beta_dict is None:
@@ -516,6 +522,15 @@ class SpaceOracle(Oracle):
         gem_simulated = gene_mtx + delta_simulated
         
         assert gem_simulated.shape == gene_mtx.shape
+
+        # just as in CellOracle, don't allow simulated to exceed observed values
+        imputed_count = gene_mtx
+        min_ = imputed_count.min(axis=0)
+        max_ = imputed_count.max(axis=0)
+        gem_simulated = pd.DataFrame(gem_simulated).clip(lower=min_, upper=max_, axis=1).values
+
+        self.adata.layers['simulated_count'] = gem_simulated
+        self.adata.layers['delta_X'] = gem_simulated - imputed_count
 
         return gem_simulated
 
@@ -626,43 +641,3 @@ class SpaceOracle(Oracle):
         return gem_simulated
 
 
-
-# def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
-#     """Calculate a nearest neighbour distance matrix
-
-#     Notice that k is meant as the actual number of neighbors NOT INCLUDING itself
-#     To achieve that we call kneighbors_graph with X = None
-#     """
-#     if metric == "correlation":
-#         nn = NearestNeighbors(
-#             n_neighbors=k, metric="correlation", 
-#             algorithm="brute", n_jobs=n_jobs)
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-#     else:
-#         nn = NearestNeighbors(n_neighbors=k, n_jobs=n_jobs, )
-#         nn.fit(data)
-#         return nn.kneighbors_graph(X=None, mode=mode)
-
-
-# def connectivity_to_weights(mknn, axis=1):
-#     if type(mknn) is not sparse.csr_matrix:
-#         mknn = mknn.tocsr()
-#     return mknn.multiply(1. / sparse.csr_matrix.sum(mknn, axis=axis))
-
-# def convolve_by_sparse_weights(data, w):
-#     w_ = w.T
-#     assert np.allclose(w_.sum(0), 1)
-#     return sparse.csr_matrix.dot(data, w_)
-
-
-# def _adata_to_matrix(adata, layer_name, transpose=True):
-#     if isinstance(adata.layers[layer_name], np.ndarray):
-#         matrix = adata.layers[layer_name].copy()
-#     else:
-#         matrix = adata.layers[layer_name].todense().A.copy()
-
-#     if transpose:
-#         matrix = matrix.transpose()
-
-#     return matrix.copy(order="C")

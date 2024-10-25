@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 import copy
 import enlighten
-import pyro
 import torch
 import pyro
 import torch.nn as nn
