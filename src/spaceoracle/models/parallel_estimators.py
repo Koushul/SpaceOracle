@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.utils.data import DataLoader, Dataset, TensorDataset
-# from sklearn.linear_model import ARDRegression
+from sklearn.linear_model import ARDRegression
 from group_lasso import GroupLasso
 from spaceoracle.models.spatial_map import xyc2spatial_fast
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork, expand_paired_interactions
@@ -336,7 +336,8 @@ class SpatialCellularProgramsEstimator:
         return _data
 
 
-    def fit(self, num_epochs=10, threshold_lambda=1e4, discard=50, learning_rate=2e-4, batch_size=512, pbar=None):
+    def fit(self, num_epochs=10, threshold_lambda=1e-4, discard=50, learning_rate=2e-4, batch_size=512, 
+            use_ARD=False, testing=False, pbar=None):
         sp_maps, X, y, cluster_labels = self.init_data()
 
         self.models = {}
@@ -356,47 +357,80 @@ class SpatialCellularProgramsEstimator:
             )
         
         for cluster in np.unique(cluster_labels):
+            if testing: 
+                cluster = testing
+
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
 
-            groups = [1]*len(self.regulators) + [2]*len(self.ligands)
-            groups = np.array(groups)
+            if use_ARD: 
 
-            gl = GroupLasso(
-                groups=groups,
-                group_reg=threshold_lambda,
-                l1_reg=0,
-                frobenius_lipschitz=True,
-                scale_reg="inverse_group_size",
-                subsampling_scheme=1,
-                # supress_warning=True,
-                n_iter=1000,
-                tol=1e-3,
-            )
-            gl.fit(X_cell, y_cell)
+                X_tf = X_cell[:, :len(self.regulators)]
+                X_lr = X_cell[:, len(self.regulators):]
 
-            y_pred = gl.predict(X_cell)
-            coefs = gl.coef_.flatten()
+                m1 = ARDRegression(threshold_lambda=threshold_lambda)
+                m1.fit(X_tf, y_cell)
 
-            def threshold_coefficients(coefs, group, discard=50):
-                '''higher discard % means we set higher threshold'''
-                group_coefs = coefs[groups == group]
-                if len(group_coefs) <= 0:
-                    return []
-                thresh = np.percentile(abs(group_coefs), discard)
-                return np.where(abs(group_coefs) > thresh, group_coefs, 0)
+                m2 = ARDRegression(threshold_lambda=threshold_lambda, fit_intercept=True)
+                m2.fit(X_lr, y_cell)
 
-            tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
-            lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
-            _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
+                y_pred = (m1.predict(X_tf) + m2.predict(X_lr)) / 2
+                r2_ard = r2_score(y_cell, y_pred)
 
-            r2_ard = r2_score(y_cell, y_pred)
+                intercept = (m1.intercept_ + m2.intercept_) / 2
+                _betas = np.hstack([intercept, m1.coef_, m2.coef_])
 
-            # m = ARDRegression(threshold_lambda=threshold_lambda)
-            # m.fit(X_cell, y_cell)
-            # y_pred = m.predict(X_cell)
-            # r2_ard = r2_score(y_cell, y_pred)
-            # _betas = np.hstack([m.intercept_, m.coef_])
+                # m = ARDRegression(threshold_lambda=threshold_lambda)
+                # m.fit(X_cell, y_cell)
+                # y_pred = m.predict(X_cell)
+                # r2_ard = r2_score(y_cell, y_pred)
+                # _betas = np.hstack([m.intercept_, m.coef_])
+
+                coefs = None
+            
+            else:
+
+                groups = [1]*len(self.regulators) + [2]*len(self.ligands)
+                groups = np.array(groups)
+
+                gl = GroupLasso(
+                    groups=groups,
+                    group_reg=threshold_lambda,
+                    l1_reg=0,
+                    frobenius_lipschitz=True,
+                    scale_reg="inverse_group_size",
+                    subsampling_scheme=1,
+                    # supress_warning=True,
+                    n_iter=1000,
+                    tol=1e-3,
+                )
+                gl.fit(X_cell, y_cell)
+
+                y_pred = gl.predict(X_cell)
+                coefs = gl.coef_.flatten()
+
+                def threshold_coefficients(coefs, group, discard=50):
+                    '''higher discard % means we set higher threshold'''
+                    group_coefs = coefs[groups == group]
+                    if len(group_coefs) <= 0:
+                        return []
+                    thresh = np.percentile(abs(group_coefs), discard)
+                    return np.where(abs(group_coefs) > thresh, group_coefs, 0)
+
+                tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
+                lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
+                _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
+
+                r2_ard = r2_score(y_cell, y_pred)
+            
+            if testing:
+                return {
+                    'y_pred': y_pred, 
+                    'r2_ard': r2_ard,
+                    'betas': _betas,
+                    'coefs': coefs,
+                    'cluster': cluster
+                }
 
             loader = DataLoader(
                 RotatedTensorDataset(
