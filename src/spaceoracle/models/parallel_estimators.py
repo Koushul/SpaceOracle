@@ -140,14 +140,20 @@ class SpatialCellularProgramsEstimator:
         self.receptors = list(self.lr.receptor.values)
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target.parquet'))
+        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
         nichenet_ligand_target = pd.read_parquet(data_path)
+
+        # print(nichenet_ligand_target)
+
+        # nichenet_ligand_target = nichenet_ligand_target.loc[
+        #     np.intersect1d(nichenet_ligand_target.index, self.regulators)][
+        #         np.intersect1d(nichenet_ligand_target.columns, self.adata.var_names)]
+
         nichenet_ligand_target = nichenet_ligand_target.loc[
             np.intersect1d(nichenet_ligand_target.index, self.regulators)][
                 np.intersect1d(nichenet_ligand_target.columns, self.ligands)]
         
 
-        # print(nichenet_ligand_target)
         
         self.tfl_pairs = []
         self.tfl_regulators = []
@@ -241,13 +247,17 @@ class SpatialCellularProgramsEstimator:
                 self.adata.to_df(layer=self.layer)[self.receptors]
             )
 
+        else:
+            self.adata.uns['received_ligands'] = pd.DataFrame(index=self.adata.obs.index)
+            self.adata.uns['ligand_receptor'] = pd.DataFrame(index=self.adata.obs.index)
+
+
+        if len(self.tfl_pairs) > 0:
             self.adata.uns['ligand_regulator'] = self.ligand_regulators_interactions(
                 self.adata.uns['received_ligands_tfl'][self.tfl_ligands], 
                 self.adata.to_df(layer=self.layer)[self.tfl_regulators]
             )
         else:
-            self.adata.uns['received_ligands'] = pd.DataFrame(index=self.adata.obs.index)
-            self.adata.uns['ligand_receptor'] = pd.DataFrame(index=self.adata.obs.index)
             self.adata.uns['ligand_regulator'] = pd.DataFrame(index=self.adata.obs.index)
         
 
@@ -411,6 +421,12 @@ class SpatialCellularProgramsEstimator:
                 color='green',
                 auto_refresh=True
             )
+
+        print(f'Fitting {self.target_gene} with {len(self.modulators)} modulators')
+        print(f'\t{len(self.regulators)} Transcription Factors')
+        print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
+        print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
+
         
         for cluster in np.unique(cluster_labels):
             mask = cluster_labels == cluster
@@ -435,10 +451,7 @@ class SpatialCellularProgramsEstimator:
                 batch_size=batch_size, shuffle=True
             )
 
-            if not (_betas.shape[0] == len(self.modulators)+1):
-                print(f'Mismatch for {self.target_gene} with {len(self.modulators)} modulators and {_betas.shape[0]} betas')
-                print(X_cell.shape, self.train_df.shape)
-                print(self.adata.uns['ligand_regulator'])
+            assert _betas.shape[0] == len(self.modulators)+1
 
             model = CellularNicheNetwork(
                 n_modulators = len(self.modulators), 

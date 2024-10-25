@@ -161,7 +161,7 @@ class OracleQueue:
     @property
     def completed_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
-        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        completed_paths = glob.glob(f'{self.model_dir}/*.parquet')
         return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
@@ -171,7 +171,8 @@ class OracleQueue:
     @property
     def remaining_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
-        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        completed_paths = glob.glob(f'{self.model_dir}/*.parquet')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         orphan_paths = glob.glob(f'{self.model_dir}/*.orphan')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
@@ -200,7 +201,7 @@ class OracleQueue:
     @staticmethod
     def extract_gene_name(path):
         patterns = {
-            'betadata': r'([^/]+)_betadata\.csv$',
+            'betadata': r'([^/]+)_betadata\.parquet$',
             'lock': r'([^/]+)\.lock$',
             'orphan': r'([^/]+)\.orphan$'
         }
@@ -350,7 +351,8 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
-                estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+                # estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+                estimator.betadata.to_parquet(f'{self.save_dir}/{gene}_betadata.parquet')
 
 
                 # (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
@@ -395,8 +397,8 @@ class SpaceOracle(Oracle):
 
     @staticmethod
     def load_betadata(gene, save_dir):
-        return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
-
+        # return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
+        return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
 
     # @torch.no_grad()
     # def _get_betas(self, adata, target_gene):
