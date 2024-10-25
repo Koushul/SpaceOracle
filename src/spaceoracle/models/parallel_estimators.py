@@ -123,7 +123,7 @@ class SpatialCellularProgramsEstimator:
         assert np.isin(self.regulators, self.adata.var_names).all(), 'all regulators must be in adata.var_names'
 
 
-    def init_ligands_and_receptors(self):
+    def init_ligands_and_receptors(self, receptor_thresh=0.01):
         df_ligrec = ct.pp.ligand_receptor_database(
                 database='CellChat', 
                 species='mouse', 
@@ -134,6 +134,11 @@ class SpatialCellularProgramsEstimator:
 
         self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(self.adata.var_names) & (self.lr.receptor.isin(self.adata.var_names))]
+
+        receptors = self.lr['receptor']
+        recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
+        self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
+
         self.lr = self.lr[~((self.lr.receptor == self.target_gene) | (self.lr.ligand == self.target_gene))]
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
         self.lr = self.lr.drop_duplicates(subset='pairs', keep='first')
@@ -141,7 +146,7 @@ class SpatialCellularProgramsEstimator:
         self.receptors = list(self.lr.receptor.values)
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target.parquet'))
+        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
         nichenet_ligand_target = pd.read_parquet(data_path)
         nichenet_ligand_target = nichenet_ligand_target.loc[
             np.intersect1d(nichenet_ligand_target.index, self.regulators)][
@@ -395,7 +400,7 @@ class SpatialCellularProgramsEstimator:
 
 
     def fit(self, num_epochs=10, threshold_lambda=1e-4, discard=50, learning_rate=2e-4, batch_size=512, 
-            use_ARD=False, testing=False, pbar=None):
+            use_ARD=False, clip_betas=False, testing=False, pbar=None):
         sp_maps, X, y, cluster_labels = self.init_data()
 
         self.models = {}
@@ -424,7 +429,8 @@ class SpatialCellularProgramsEstimator:
             if use_ARD: 
 
                 X_tf = X_cell[:, :len(self.regulators)]
-                X_lr = X_cell[:, len(self.regulators):]
+                X_lr = X_cell[:, len(self.regulators):len(self.regulators)+len(self.ligands)]
+                X_tfl = X_cell[:, -len(self.tfl_pairs):]
 
                 m1 = ARDRegression(threshold_lambda=threshold_lambda)
                 m1.fit(X_tf, y_cell)
@@ -432,11 +438,14 @@ class SpatialCellularProgramsEstimator:
                 m2 = ARDRegression(threshold_lambda=threshold_lambda, fit_intercept=True)
                 m2.fit(X_lr, y_cell)
 
-                y_pred = (m1.predict(X_tf) + m2.predict(X_lr)) / 2
+                m3 = ARDRegression(threshold_lambda=threshold_lambda, fit_intercept=True)
+                m3.fit(X_tfl, y_cell)
+
+                y_pred = (m1.predict(X_tf) + m2.predict(X_lr) + m3.predict(X_tfl)) / 3
                 r2_ard = r2_score(y_cell, y_pred)
 
-                intercept = (m1.intercept_ + m2.intercept_) / 2
-                _betas = np.hstack([intercept, m1.coef_, m2.coef_])
+                intercept = (m1.intercept_ + m2.intercept_ + m3.intercept_) / 3
+                _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
 
                 # m = ARDRegression(threshold_lambda=threshold_lambda)
                 # m.fit(X_cell, y_cell)
@@ -448,7 +457,7 @@ class SpatialCellularProgramsEstimator:
             
             else:
 
-                groups = [1]*len(self.regulators) + [2]*len(self.ligands)
+                groups = [1]*len(self.regulators) + [2]*len(self.ligands) + [3]*len(self.tfl_pairs)
                 groups = np.array(groups)
 
                 gl = GroupLasso(
@@ -477,9 +486,14 @@ class SpatialCellularProgramsEstimator:
 
                 tf_coefs = threshold_coefficients(coefs, group=1, discard=discard)
                 lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
-                _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs])
+                tfl_coefs = threshold_coefficients(coefs, group=3, discard=discard)
+
+                _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs, tfl_coefs])
 
                 r2_ard = r2_score(y_cell, y_pred)
+            
+            if clip_betas:
+                _betas = np.clip(_betas, -clip_betas, clip_betas)
             
             if testing:
                 return {
@@ -487,7 +501,8 @@ class SpatialCellularProgramsEstimator:
                     'r2_ard': r2_ard,
                     'betas': _betas,
                     'coefs': coefs,
-                    'cluster': cluster
+                    'cluster': cluster,
+                    'X_cell': X_cell
                 }
 
             loader = DataLoader(
