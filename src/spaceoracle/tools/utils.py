@@ -1,5 +1,7 @@
 from numba import jit
 import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 import torch
 import random
 import functools
@@ -135,3 +137,11 @@ def gaussian_kernel_2d(origin, xy_array, radius, eps=0.001):
     weights = np.exp(-(distances**2) / (2 * sigma**2))
     # weights[0] = 0
     return weights
+
+
+def min_max_df(df):
+    return pd.DataFrame(
+        MinMaxScaler().fit_transform(df),
+        columns=df.columns,
+        index=df.index
+    )

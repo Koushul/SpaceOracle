@@ -24,10 +24,11 @@ def generate_realistic_data(noise_level=0.1):
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     adata.layers['counts'] = adata.X.copy()
-    sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=5)
-    adata = adata[:, (adata.var.highly_variable | adata.var_names.isin(['Pax5', 'Pou2f2', 'Bmp2', 'Bmpr1a']))]
-    adata = adata[adata.obs['rctd_cluster'].isin([0, 1])]
-    adata = adata[:3000, :]
+    sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2)
+    adata = adata[:, (adata.var.highly_variable | adata.var_names.isin(['Il2', 'Afp', 'Ebf1', 'Il4', 'Pax5']))]
+
+    adata = adata[adata.obs['rctd_cluster'].isin([0, 1, 2, 3])]
+    adata = adata[:1000, :]
     adata.obs['rctd_cluster'] = adata.obs['rctd_cluster'].cat.remove_unused_categories()
     adata.layers['imputed_count'] = adata.X.toarray().copy()
     adata.layers['normalized_count'] = adata.layers['imputed_count'].copy()
@@ -48,7 +49,8 @@ def test_space_oracle_inference(mock_adata, temp_dir):
         spatial_dim=16,
         batch_size=16,
         rotate_maps=True,
-        test_mode=True
+        test_mode=True, 
+        tf_ligand_cutoff = 0
     )
 
     so.run()
