@@ -3,6 +3,7 @@ from anndata import AnnData
 import enlighten
 from sklearn.metrics import r2_score
 import torch
+import os
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -138,8 +139,9 @@ class SpatialCellularProgramsEstimator:
         self.ligands = list(self.lr.ligand.values)
         self.receptors = list(self.lr.receptor.values)
 
-
-        nichenet_ligand_target = pd.read_csv('/tmp/ligand_target_mouse.csv', index_col=0)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target.parquet'))
+        nichenet_ligand_target = pd.read_parquet(data_path)
         nichenet_ligand_target = nichenet_ligand_target.loc[
             np.intersect1d(nichenet_ligand_target.index, self.regulators)][
                 np.intersect1d(nichenet_ligand_target.columns, self.ligands)]

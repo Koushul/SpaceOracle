@@ -20,6 +20,10 @@ class CPU_Unpickler(pickle.Unpickler):
             return super().find_class(module, name)
 
 
+def search(query, string_list):
+    return [i for i in string_list if query.lower() in i.lower()]
+
+
 def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
     """Calculate a nearest neighbour distance matrix
 
