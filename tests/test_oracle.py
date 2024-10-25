@@ -25,7 +25,7 @@ def generate_realistic_data(noise_level=0.1):
     adata = adata[:, adata.var_names.isin(regulators+['Cd74']+['Il2', 'Il2ra', 'Ccl5', 'Bmp2', 'Bmpr1a'])]
 
     adata = adata[adata.obs['rctd_cluster'].isin([0, 1])]
-    adata = adata[:200, :]
+    adata = adata[:600, :]
 
     adata.obs['rctd_cluster'] = adata.obs['rctd_cluster'].cat.remove_unused_categories()
 

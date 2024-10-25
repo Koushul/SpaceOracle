@@ -219,7 +219,7 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', grn=None,
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3):
+    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3, tf_ligand_cutoff=0.01):
         
         super().__init__(adata)
         if grn is None:
@@ -240,6 +240,7 @@ class SpaceOracle(Oracle):
         self.alpha = alpha
         self.threshold_lambda = threshold_lambda
         self.test_mode = test_mode
+        self.tf_ligand_cutoff = tf_ligand_cutoff
         self.beta_dict = None
         self.coef_matrix = None
 
@@ -307,6 +308,7 @@ class SpaceOracle(Oracle):
                 cluster_annot=self.annot,
                 spatial_dim=self.spatial_dim,
                 radius=200,
+                tf_ligand_cutoff=self.tf_ligand_cutoff
             )
             
             estimator.test_mode = self.test_mode
