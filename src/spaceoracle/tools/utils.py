@@ -1,5 +1,7 @@
 from numba import jit
 import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 import torch
 import random
 import functools
@@ -16,6 +18,10 @@ class CPU_Unpickler(pickle.Unpickler):
             return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
         else:
             return super().find_class(module, name)
+
+
+def search(query, string_list):
+    return [i for i in string_list if query.lower() in i.lower()]
 
 
 def knn_distance_matrix(data, metric=None, k=40, mode='connectivity', n_jobs=4):
@@ -135,3 +141,11 @@ def gaussian_kernel_2d(origin, xy_array, radius, eps=0.001):
     weights = np.exp(-(distances**2) / (2 * sigma**2))
     # weights[0] = 0
     return weights
+
+
+def min_max_df(df):
+    return pd.DataFrame(
+        MinMaxScaler().fit_transform(df),
+        columns=df.columns,
+        index=df.index
+    )

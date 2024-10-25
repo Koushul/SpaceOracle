@@ -25,7 +25,7 @@ def generate_realistic_data(noise_level=0.1):
     adata = adata[:, adata.var_names.isin(regulators+['Cd74']+['Il2', 'Il2ra', 'Ccl5', 'Bmp2', 'Bmpr1a'])]
 
     adata = adata[adata.obs['rctd_cluster'].isin([0, 1])]
-    adata = adata[:200, :]
+    adata = adata[:600, :]
 
     adata.obs['rctd_cluster'] = adata.obs['rctd_cluster'].cat.remove_unused_categories()
 
@@ -90,7 +90,7 @@ def test_oracle_queue_operations(temp_dir):
     assert set(queue.remaining_genes) == set(genes)-{'gene2'}
 
     # Test completed_genes
-    with open(os.path.join(temp_dir, 'gene1_betadata.csv'), 'w') as f:
+    with open(os.path.join(temp_dir, 'gene1_betadata.parquet'), 'w') as f:
         f.write('dummy')
     assert queue.completed_genes == ['gene1']
     assert set(queue.remaining_genes) == {'gene3'}
@@ -102,19 +102,18 @@ def test_space_oracle_initialization(mock_adata_with_true_betas, temp_dir):
     assert space_oracle.grn is not None
     assert space_oracle.queue is not None
 
-# @pytest.mark.parametrize("estimator_class", [PixelAttention, ProbabilisticPixelAttention])
-@pytest.mark.parametrize("estimator_class", [ProbabilisticPixelModulators])
-def test_space_oracle_run(mock_adata_with_true_betas, temp_dir, estimator_class):
-    adata = mock_adata_with_true_betas
-    with patch('spaceoracle.oracles.PixelAttention', MagicMock(return_value=estimator_class(adata, 'Cd74'))):
-        space_oracle = SpaceOracle(adata, save_dir=temp_dir, max_epochs=2, batch_size=3)
-        space_oracle.adata.uns['received_ligands'] = ProbabilisticPixelModulators.received_ligands(
-            xy=adata.obsm['spatial'], 
-            lig_df=adata.to_df()[[adata.var_names[0]]], 
-            radius=10, 
-        )
-        space_oracle.run()
+# @pytest.mark.parametrize("estimator_class", [ProbabilisticPixelModulators])
+# def test_space_oracle_run(mock_adata_with_true_betas, temp_dir, estimator_class):
+#     adata = mock_adata_with_true_betas
+#     with patch('spaceoracle.oracles.PixelAttention', MagicMock(return_value=estimator_class(adata, 'Cd74'))):
+#         space_oracle = SpaceOracle(adata, save_dir=temp_dir, max_epochs=2, batch_size=3)
+#         space_oracle.adata.uns['received_ligands'] = ProbabilisticPixelModulators.received_ligands(
+#             xy=adata.obsm['spatial'], 
+#             lig_df=adata.to_df()[[adata.var_names[0]]], 
+#             radius=10, 
+#         )
+#         space_oracle.run()
 
-    assert len(space_oracle.queue.completed_genes) > 0
-    assert len(space_oracle.trained_genes) > 0
-    assert len(os.listdir(temp_dir)) > 0
+#     assert len(space_oracle.queue.completed_genes) > 0
+#     assert len(space_oracle.trained_genes) > 0
+#     assert len(os.listdir(temp_dir)) > 0

@@ -161,7 +161,7 @@ class OracleQueue:
     @property
     def completed_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
-        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        completed_paths = glob.glob(f'{self.model_dir}/*.parquet')
         return list(filter(None, map(self.extract_gene_name, completed_paths)))
 
     @property
@@ -171,7 +171,8 @@ class OracleQueue:
     @property
     def remaining_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
-        completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        # completed_paths = glob.glob(f'{self.model_dir}/*.csv')
+        completed_paths = glob.glob(f'{self.model_dir}/*.parquet')
         locked_paths = glob.glob(f'{self.model_dir}/*.lock')
         orphan_paths = glob.glob(f'{self.model_dir}/*.orphan')
         completed_genes = list(filter(None, map(self.extract_gene_name, completed_paths)))
@@ -200,7 +201,7 @@ class OracleQueue:
     @staticmethod
     def extract_gene_name(path):
         patterns = {
-            'betadata': r'([^/]+)_betadata\.csv$',
+            'betadata': r'([^/]+)_betadata\.parquet$',
             'lock': r'([^/]+)\.lock$',
             'orphan': r'([^/]+)\.orphan$'
         }
@@ -223,7 +224,7 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', 
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3):
+    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3, tf_ligand_cutoff=0.01):
         
         super().__init__(adata)
         self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
@@ -241,6 +242,7 @@ class SpaceOracle(Oracle):
         self.alpha = alpha
         self.threshold_lambda = threshold_lambda
         self.test_mode = test_mode
+        self.tf_ligand_cutoff = tf_ligand_cutoff
         self.beta_dict = None
         self.coef_matrix = None
 
@@ -308,6 +310,7 @@ class SpaceOracle(Oracle):
                 cluster_annot=self.annot,
                 spatial_dim=self.spatial_dim,
                 radius=200,
+                tf_ligand_cutoff=self.tf_ligand_cutoff
             )
             
             estimator.test_mode = self.test_mode
@@ -348,7 +351,8 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
-                estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+                # estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
+                estimator.betadata.to_parquet(f'{self.save_dir}/{gene}_betadata.parquet')
 
 
                 # (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
@@ -393,8 +397,8 @@ class SpaceOracle(Oracle):
 
     @staticmethod
     def load_betadata(gene, save_dir):
-        return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
-
+        # return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
+        return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
 
     # @torch.no_grad()
     # def _get_betas(self, adata, target_gene):
