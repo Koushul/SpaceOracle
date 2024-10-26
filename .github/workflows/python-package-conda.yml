@@ -34,4 +34,5 @@ jobs:
         source ~/.bashrc
         conda activate base
         conda activate base
+        wget https://zenodo.org/records/13996393/files/ligand_target_mouse.parquet -O data/ligand_target_mouse.parquet
         pytest -vv -p no:warnings

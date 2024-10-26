@@ -147,30 +147,44 @@ class SpatialCellularProgramsEstimator:
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
-        nichenet_ligand_target = pd.read_parquet(data_path)
+        nichenet_lt = pd.read_parquet(data_path)
 
-        # print(nichenet_ligand_target)
+        # print(nichenet_lt)
 
-        # nichenet_ligand_target = nichenet_ligand_target.loc[
-        #     np.intersect1d(nichenet_ligand_target.index, self.regulators)][
-        #         np.intersect1d(nichenet_ligand_target.columns, self.adata.var_names)]
+        # nichenet_lt = nichenet_lt.loc[
+        #     np.intersect1d(nichenet_lt.index, self.regulators)][
+        #         np.intersect1d(nichenet_lt.columns, self.adata.var_names)]
 
-        nichenet_ligand_target = nichenet_ligand_target.loc[
-            np.intersect1d(nichenet_ligand_target.index, self.regulators)][
-                np.intersect1d(nichenet_ligand_target.columns, self.ligands)]
+        self.nichenet_lt = nichenet_lt.loc[
+            np.intersect1d(nichenet_lt.index, self.regulators)][
+                np.intersect1d(nichenet_lt.columns, self.ligands)]
         
 
         
         self.tfl_pairs = []
         self.tfl_regulators = []
         self.tfl_ligands = []
-        for idx, row in nichenet_ligand_target.iterrows():
+
+        self.ligand_regulators = {lig: set(self.grn.get_regulators(self.adata, lig)) for lig in self.nichenet_lt.columns}
+
+        for tf_ in self.nichenet_lt.index:
+            row = self.nichenet_lt.loc[tf_]
             top_5 = row.nlargest(5)
-            for col, value in top_5.items():
-                if value > self.tf_ligand_cutoff:
-                    self.tfl_ligands.append(col)
-                    self.tfl_regulators.append(idx)
-                    self.tfl_pairs.append(f"{col}#{idx}")
+            for lig_, value in top_5.items():
+                if self.target_gene not in self.ligand_regulators[lig_] and \
+                    tf_ not in self.ligand_regulators[lig_] and \
+                    value > self.tf_ligand_cutoff:
+                    self.tfl_ligands.append(lig_)
+                    self.tfl_regulators.append(tf_)
+                    self.tfl_pairs.append(f"{lig_}#{tf_}")
+
+        # for tf_, row in self.nichenet_lt.iterrows():
+        #     top_5 = row.nlargest(5)
+        #     for lig_, value in top_5.items():
+        #         if value > self.tf_ligand_cutoff:
+        #             self.tfl_ligands.append(lig_)
+        #             self.tfl_regulators.append(tf_)
+        #             self.tfl_pairs.append(f"{lig_}#{tf_}")
 
 
         assert len(self.ligands) == len(self.receptors)
@@ -348,19 +362,26 @@ class SpatialCellularProgramsEstimator:
             received_ligands = min_max_df(received_ligands)
             
 
-        betas_df = self.get_betas()
-
         ## wL is the amount of ligand 'received' at each location
         ## assuming ligands and receptors expression are independent, dL/dR = 0
-        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
-        ## dy/dTF1 = b1
-        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
-        ##         = b2*R1 + b3*R2
+        ## we also enforce TF-Ligand pairs to only be valid if the 
+        #    ligand is NOT regulated by that particular TF, so dL/dTF = 0
+        #
+        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2 + b4*TF1#wL1
+        ## dy/dTF1 = b1 + b4*[TF1*dwL1/dTF1 + wL1]
+        #          = b1 + b4*wL1 
+        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2] + b4*[TF1 + wL1*dTF1/dwL1]
+        ##         = b2*R1 + b3*R2 + b4*TF1
         ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
+
+
+        betas_df = self.get_betas()
 
 
         b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
         b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
+        b_ligand_tf = lambda x, y: betas_df[f'beta_{x}#{y}']*received_ligands[x]
+        b_regulators = lambda x, y: betas_df[f'beta_{x}#{y}']*gex_df[y]
 
         ## dy/dR
         ligand_betas = pd.DataFrame(
@@ -368,16 +389,32 @@ class SpatialCellularProgramsEstimator:
             columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
         
         ## dy/dwL
-        receptor_betas = pd.DataFrame(
+        receptor_betas_1 = pd.DataFrame(
             [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
             columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
         
-        ## linearly combine betas for the same ligands or receptors
+        receptor_betas_2 = pd.DataFrame(
+            [b_ligand_tf(x, y).values for x, y in zip(self.tfl_ligands, self.tfl_regulators)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.tfl_ligands]).T
+        
+        receptor_betas = pd.concat([receptor_betas_1, receptor_betas_2], axis=1)
+        
+        ## dy/dTF
+        regulators_with_ligands_betas = pd.DataFrame(
+            [b_regulators(x, y).values for x, y in zip(self.tfl_ligands, self.tfl_regulators)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in self.tfl_regulators]).T
+        
+        betas_df = pd.concat([betas_df, regulators_with_ligands_betas], axis=1)
+        
+        ## linearly combine betas for the same ligands, receptors, and regulators
         ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
         receptor_betas = receptor_betas.groupby(lambda x: x, axis=1).sum()
+        betas_df = betas_df.groupby(lambda x: x, axis=1).sum()
 
         assert not any(ligand_betas.columns.duplicated())
         assert not any(receptor_betas.columns.duplicated())
+        assert not any(betas_df.columns.duplicated())
+
         
         xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
         gex_modulators = self.regulators+self.ligands+self.receptors+[self.target_gene]
