@@ -287,7 +287,7 @@ class SpaceOracle(Oracle):
         )
 
 
-        while not self.queue.is_empty:
+        while not self.queue.is_empty and not os.path.exists(self.save_dir+'/process.kill'):
             gene = next(self.queue)
 
             # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
