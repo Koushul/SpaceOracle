@@ -468,10 +468,11 @@ class SpaceOracle(Oracle):
 
         gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
 
-        weighted_ligands = received_ligands(
-            self.adata.obsm['spatial'], 
-            gex_df[list(self.ligands)]
-        )
+        if len(self.ligands) > 0:
+            weighted_ligands = received_ligands(
+                self.adata.obsm['spatial'], 
+                gex_df[list(self.ligands)]
+            )
 
         args = [(gene, weighted_ligands, gex_df, betaoutput) for gene, betaoutput in betas_dict.items()]
 
