@@ -27,4 +27,5 @@ enlighten
 pyro-ppl
 commot
 group-lasso
+pqdm
 # velocyto==0.17.17
