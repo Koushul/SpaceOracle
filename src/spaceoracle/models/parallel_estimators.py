@@ -342,104 +342,11 @@ class SpatialCellularProgramsEstimator:
     
     @property
     def betadata(self):
-        gex_df = self.adata.to_df(layer=self.layer)
-        received_ligands = self.adata.uns['received_ligands']
-
-        # gex_df = pd.DataFrame(
-        #     MinMaxScaler().fit_transform(gex_df),
-        #     columns=gex_df.columns,
-        #     index=gex_df.index
-        # )
-
-        gex_df = min_max_df(gex_df)
-
-        if received_ligands.shape[1] > 0:
-            # received_ligands = pd.DataFrame(
-            #     MinMaxScaler().fit_transform(received_ligands),
-            #     columns=received_ligands.columns,
-            #     index=received_ligands.index
-            # )
-            received_ligands = min_max_df(received_ligands)
-            
-
-        ## wL is the amount of ligand 'received' at each location
-        ## assuming ligands and receptors expression are independent, dL/dR = 0
-        ## we also enforce TF-Ligand pairs to only be valid if the 
-        #    ligand is NOT regulated by that particular TF, so dL/dTF = 0
-        #
-        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2 + b4*TF1#wL1
-        ## dy/dTF1 = b1 + b4*[TF1*dwL1/dTF1 + wL1]
-        #          = b1 + b4*wL1 
-        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2] + b4*[TF1 + wL1*dTF1/dwL1]
-        ##         = b2*R1 + b3*R2 + b4*TF1
-        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
-
-
         betas_df = self.get_betas()
 
-
-        b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
-        b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
-        b_ligand_tf = lambda x, y: betas_df[f'beta_{x}#{y}']*received_ligands[x]
-        b_regulators = lambda x, y: betas_df[f'beta_{x}#{y}']*gex_df[y]
-
-        ## dy/dR
-        ligand_betas = pd.DataFrame(
-            [b_ligand(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.receptors]).T
-        
-        ## dy/dwL
-        receptor_betas_1 = pd.DataFrame(
-            [b_receptor(x, y).values for x, y in zip(self.ligands, self.receptors)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.ligands]).T
-        
-        receptor_betas_2 = pd.DataFrame(
-            [b_ligand_tf(x, y).values for x, y in zip(self.tfl_ligands, self.tfl_regulators)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.tfl_ligands]).T
-        
-        receptor_betas = pd.concat([receptor_betas_1, receptor_betas_2], axis=1)
-        
-        ## dy/dTF
-        regulators_with_ligands_betas = pd.DataFrame(
-            [b_regulators(x, y).values for x, y in zip(self.tfl_ligands, self.tfl_regulators)],
-            columns=self.adata.obs.index, index=['beta_'+k for k in self.tfl_regulators]).T
-        
-        betas_df = pd.concat([betas_df, regulators_with_ligands_betas], axis=1)
-        
-        ## linearly combine betas for the same ligands, receptors, and regulators
-        ligand_betas = ligand_betas.groupby(lambda x:x, axis=1).sum()
-        receptor_betas = receptor_betas.groupby(lambda x: x, axis=1).sum()
-        betas_df = betas_df.groupby(lambda x: x, axis=1).sum()
-
-        assert not any(ligand_betas.columns.duplicated())
-        assert not any(receptor_betas.columns.duplicated())
-        assert not any(betas_df.columns.duplicated())
-
-        
         xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
-        gex_modulators = self.regulators+self.ligands+self.receptors+[self.target_gene]
 
-        """
-        # Combine all relevant data into a single DataFrame
-        # one row per cell
-        betas_df \                                      # beta coefficients, TFs and LR-pairs
-            .join(gex_df[np.unique(gex_modulators)]) \  # gene expression data for each modulator
-            .join(self.adata.uns['ligand_receptor']) \  # weighted-ligands*receptor values
-            .join(ligand_betas) \                       # beta_wLR * wL, 
-            .join(receptor_betas) \                     # beta_wLR * R
-            .join(self.adata.obs) \                     # cell type metadata
-            .join(xy)                                   # spatial coordinates
-
-        """
-
-        received_ligands.columns = ['received_'+i for i in received_ligands.columns]
-        
         _data = betas_df \
-            .join(gex_df[np.unique(gex_modulators)]) \
-            .join(received_ligands) \
-            .join(self.train_df[self.lr['pairs']]) \
-            .join(ligand_betas) \
-            .join(receptor_betas) \
             .join(self.adata.obs) \
             .join(xy)
         

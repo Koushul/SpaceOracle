@@ -27,6 +27,7 @@ from sklearn.linear_model import Ridge
 from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
+from .tools.utils import min_max_df
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
@@ -548,7 +549,6 @@ class SpaceOracle(Oracle):
             # beta_dict[gene] = self._get_betas(self.adata, gene)
             beta_dict[gene] = self._get_betas(gene)
 
-        
         return beta_dict
 
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
@@ -580,6 +580,8 @@ class SpaceOracle(Oracle):
 
         if isinstance(gene_mtx, pd.DataFrame):
             gene_mtx = gene_mtx.values
+        
+        gene_mtx = min_max_df(gene_mtx).values
 
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
