@@ -473,6 +473,8 @@ class SpaceOracle(Oracle):
                 self.adata.obsm['spatial'], 
                 gex_df[list(self.ligands)]
             )
+        else:
+            weighted_ligands = None
 
         args = [(gene, weighted_ligands, gex_df, betaoutput) for gene, betaoutput in betas_dict.items()]
 
