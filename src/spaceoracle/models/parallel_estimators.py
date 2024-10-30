@@ -31,6 +31,27 @@ def calculate_weighted_ligands(gauss_weights, lig_df_values, u_ligands):
     
     return weighted_ligands
 
+def received_ligands(xy, lig_df, radius=200):
+    ligands = lig_df.columns
+    gauss_weights = [
+        gaussian_kernel_2d(
+            xy[i], 
+            xy, 
+            radius=radius) for i in range(len(lig_df)
+        )
+    ]
+
+    u_ligands = list(np.unique(ligands))
+    lig_df_values = lig_df[u_ligands].values
+    weighted_ligands = calculate_weighted_ligands(
+        gauss_weights, lig_df_values, u_ligands)
+
+    return pd.DataFrame(
+        weighted_ligands, 
+        index=u_ligands, 
+        columns=lig_df.index
+    ).T
+
 
 from scipy.spatial.distance import cdist
 
@@ -189,27 +210,6 @@ class SpatialCellularProgramsEstimator:
 
         assert len(self.ligands) == len(self.receptors)
         assert len(self.tfl_regulators) == len(self.tfl_ligands)
-
-    def received_ligands(self, xy, lig_df, radius=200):
-        ligands = lig_df.columns
-        gauss_weights = [
-            gaussian_kernel_2d(
-                xy[i], 
-                xy, 
-                radius=radius) for i in range(len(lig_df)
-            )
-        ]
-
-        u_ligands = list(np.unique(ligands))
-        lig_df_values = lig_df[u_ligands].values
-        weighted_ligands = calculate_weighted_ligands(
-            gauss_weights, lig_df_values, u_ligands)
-
-        return pd.DataFrame(
-            weighted_ligands, 
-            index=u_ligands, 
-            columns=lig_df.index
-        ).T
         
     @staticmethod
     def ligands_receptors_interactions(received_ligands_df, receptor_gex_df):
@@ -250,13 +250,13 @@ class SpatialCellularProgramsEstimator:
 
     def init_data(self):
         if len(self.lr['pairs']) > 0:
-            self.adata.uns['received_ligands'] = self.received_ligands(
+            self.adata.uns['received_ligands'] = received_ligands(
                 self.adata.obsm['spatial'], 
                 self.adata.to_df(layer=self.layer)[np.unique(self.ligands)], 
                 radius=self.radius,
             )
 
-            self.adata.uns['received_ligands_tfl'] = self.received_ligands(
+            self.adata.uns['received_ligands_tfl'] = received_ligands(
                 self.adata.obsm['spatial'], 
                 self.adata.to_df(layer=self.layer)[np.unique(self.tfl_ligands)], 
                 radius=self.radius,
