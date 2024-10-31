@@ -20,14 +20,13 @@ import re
 import glob
 import pickle
 import io
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, MinMaxScaler
 import warnings
 from sklearn.linear_model import Ridge
 
 from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
 
 from .tools.network import DayThreeRegulatoryNetwork
-from .tools.utils import min_max_df
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
@@ -581,7 +580,7 @@ class SpaceOracle(Oracle):
         if isinstance(gene_mtx, pd.DataFrame):
             gene_mtx = gene_mtx.values
         
-        gene_mtx = min_max_df(gene_mtx).values
+        gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
 
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
