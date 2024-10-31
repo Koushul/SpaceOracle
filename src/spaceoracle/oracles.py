@@ -11,8 +11,9 @@ import pandas as pd
 import pickle
 import torch
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from tqdm import tqdm
+from pqdm.processes import pqdm
 import os
 import datetime
 import re
@@ -20,6 +21,7 @@ import glob
 import pickle
 import io
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
 import warnings
 from sklearn.linear_model import Ridge
 
@@ -29,7 +31,7 @@ from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
-from .models.parallel_estimators import SpatialCellularProgramsEstimator
+from .models.parallel_estimators import SpatialCellularProgramsEstimator, received_ligands
 
 from .tools.utils import (
     CPU_Unpickler,
@@ -118,7 +120,13 @@ class Oracle(ABC):
 @dataclass
 class BetaOutput:
     betas: np.ndarray
+    modulator_genes: List[str]
     modulator_gene_indices: List[int]
+    ligands: List[str]
+    receptors: List[str]
+    tfl_ligands: List[str]
+    tfl_regulators: List[str]
+    wbetas: Optional[np.ndarray] = None
 
 
 class OracleQueue:
@@ -253,7 +261,7 @@ class SpaceOracle(Oracle):
         # )
 
         self.estimator_models = {}
-        self.regulators = {}
+        self.ligands = set()
 
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
@@ -428,24 +436,111 @@ class SpaceOracle(Oracle):
 
     def _get_betas(self, target_gene):
         betadata = self.load_betadata(target_gene, self.save_dir)
-        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_' and '$' not in i]
+        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
         all_modulators = [i.replace('beta_', '') for i in beta_columns]
-        tfs = [i for i in all_modulators if '$' not in i]
+        tfs = [i for i in all_modulators if '$' not in i and '#' not in i]
         lr_pairs = [i for i in all_modulators if '$' in i]
+        tfl_pairs = [i for i in all_modulators if '#' in i]
+        
         ligands = [i.split('$')[0] for i in lr_pairs]
         receptors = [i.split('$')[1] for i in lr_pairs]
+
+        tfl_ligands = [i.split('#')[0] for i in tfl_pairs]
+        tfl_regulators = [i.split('#')[1] for i in tfl_pairs]
+
+        self.ligands.update(ligands)
+        self.ligands.update(tfl_ligands)
         
-        modulator_gene_indices = [self.gene2index[m] for m in tfs] + \
-            [self.gene2index[m] for m in ligands] + \
-            [self.gene2index[m] for m in receptors]
-        
-        assert len(modulator_gene_indices) == len(beta_columns)
-        assert len(tfs)+len(ligands)+len(receptors) == len(modulator_gene_indices)
+        modulators = np.unique(tfs + ligands + receptors + tfl_ligands + tfl_regulators)   # sorted names
+        modulator_gene_indices = [self.gene2index[m] for m in modulators] 
+        modulators = [f'beta_{m}' for m in modulators]
 
         return BetaOutput(
-            betas=betadata[['beta0']+beta_columns].values,
+            betas=betadata[['beta0']+beta_columns],
+            modulator_genes=modulators,
             modulator_gene_indices=modulator_gene_indices,
+            ligands=ligands,
+            receptors=receptors,
+            tfl_ligands=tfl_ligands,
+            tfl_regulators=tfl_regulators
         )
+    
+    def _get_wbetas_dict(self, betas_dict, gene_mtx, n_jobs=1):
+
+        gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
+
+        if len(self.ligands) > 0:
+            weighted_ligands = received_ligands(
+                self.adata.obsm['spatial'], 
+                gex_df[list(self.ligands)]
+            )
+        else:
+            weighted_ligands = None
+
+        args = [(gene, weighted_ligands, gex_df, betaoutput) for gene, betaoutput in betas_dict.items()]
+
+        results = pqdm(
+            args,
+            self._combine_gene_wbetas,
+            n_jobs=n_jobs, 
+            argument_type='args'
+        )
+
+        for gene, betas_df in results:
+            betas_dict[gene].wbetas = betas_df
+
+        return betas_dict
+
+    def _combine_gene_wbetas(self, gene, received_ligands, gex_df, betaoutput):
+
+        betas_df = betaoutput.betas
+
+        ligands = betaoutput.ligands
+        receptors = betaoutput.receptors
+        tfl_regulators = betaoutput.tfl_regulators
+        tfl_ligands= betaoutput.tfl_ligands
+        modulators = betaoutput.modulator_genes
+
+        betas_df = self._get_gene_wbetas(
+            received_ligands, betas_df, gex_df, ligands, receptors, tfl_regulators, tfl_ligands)
+
+        betas_df = betas_df[modulators]
+        return gene, betas_df
+        
+    
+    def _get_gene_wbetas(self, received_ligands, betas_df, gex_df, ligands, receptors, tfl_regulators, tfl_ligands):
+
+        b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
+        b_receptor = lambda x, y: betas_df[f'beta_{x}${y}']*gex_df[y]
+        b_ligand_tf = lambda x, y: betas_df[f'beta_{x}#{y}']*gex_df[y]
+        b_regulators = lambda x, y: betas_df[f'beta_{x}#{y}']*received_ligands[x]
+
+        ## dy/dR
+        receptor_betas = pd.DataFrame(
+            [b_ligand(x, y).values for x, y in zip(ligands, receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in receptors]).T
+        
+        ## dy/dwL
+        ligand_betas_1 = pd.DataFrame(
+            [b_receptor(x, y).values for x, y in zip(ligands, receptors)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in ligands]).T
+
+        ligand_betas_2 = pd.DataFrame(
+            [b_ligand_tf(x, y).values for x, y in zip(tfl_ligands, tfl_regulators)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in tfl_ligands]).T
+
+        ligand_betas = pd.concat([ligand_betas_1, ligand_betas_2], axis=1)
+
+        ## dy/dTF
+        regulators_with_ligands_betas = pd.DataFrame(
+            [b_regulators(x, y).values for x, y in zip(tfl_ligands, tfl_regulators)],
+            columns=self.adata.obs.index, index=['beta_'+k for k in tfl_regulators]).T
+
+        ## linearly combine betas for the same ligands, receptors, and regulators
+        betas_df = pd.concat([betas_df, regulators_with_ligands_betas, ligand_betas, receptor_betas], axis=1)
+        betas_df = betas_df.groupby(lambda x: x, axis=1).sum()
+        
+        return betas_df
 
 
     def _get_spatial_betas_dict(self):
@@ -454,23 +549,7 @@ class SpaceOracle(Oracle):
             # beta_dict[gene] = self._get_betas(self.adata, gene)
             beta_dict[gene] = self._get_betas(gene)
 
-        
         return beta_dict
-    
-    def _get_gene_gene_matrix(self, cell_index):
-        ## do we need this function?
-        genes = self.adata.var_names
-        gene_gene_matrix = np.zeros((len(genes), len(genes)))
-
-        for i, gene in enumerate(genes):
-            _beta_out = self.beta_dict.get(gene, None)
-            
-            if _beta_out is not None:
-                r = np.array(_beta_out.modulator_gene_indices)
-                gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
-
-        return gene_gene_matrix
-
 
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
 
@@ -483,20 +562,27 @@ class SpaceOracle(Oracle):
             
             if _beta_out is not None:
                 r = np.array(_beta_out.modulator_gene_indices)
-                gene_gene_matrix[r, i] = _beta_out.betas[cell_index, 1:]
+                gene_gene_matrix[r, i] = _beta_out.wbetas.values[cell_index]
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, gene_mtx=None, target=None, n_propagation=3, gene_expr=0):
+    def perturb(self, gene_mtx=None, target=None, n_propagation=3, gene_expr=0, n_jobs=1):
+        
+        # clear downstream analyses
+        for key in ['transition_probabilities', 'grid_points', 'vector_field']:
+            self.adata.uns.pop(key, None)
+
         assert target in self.adata.var_names
         
         if gene_mtx is None: 
             gene_mtx = self.adata.layers['imputed_count']
 
-        # clear downstream analyses
-        for key in ['transition_probabilities', 'grid_points', 'vector_field']:
-            self.adata.uns.pop(key, None)
+        if isinstance(gene_mtx, pd.DataFrame):
+            gene_mtx = gene_mtx.values
+        
+        # not sure how i should feel this
+        gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
 
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
@@ -507,10 +593,13 @@ class SpaceOracle(Oracle):
 
         if self.beta_dict is None:
             self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
-        
+
         for n in range(n_propagation):
+
+            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated, n_jobs)
+
             _simulated = np.array(
-                [self._perturb_single_cell(delta_simulated, i, self.beta_dict) 
+                [self._perturb_single_cell(delta_simulated, i, beta_dict) 
                     for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
             delta_simulated = np.array(_simulated)
             delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
