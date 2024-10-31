@@ -20,7 +20,8 @@ import re
 import glob
 import pickle
 import io
-from sklearn.decomposition import PCA, MinMaxScaler
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
 import warnings
 from sklearn.linear_model import Ridge
 
@@ -580,6 +581,7 @@ class SpaceOracle(Oracle):
         if isinstance(gene_mtx, pd.DataFrame):
             gene_mtx = gene_mtx.values
         
+        # not sure how i should feel this
         gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
 
         target_index = self.gene2index[target]  
