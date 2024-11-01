@@ -13,12 +13,12 @@ adata_train = sc.read_h5ad(
 so = spaceoracle.SpaceOracle(
     adata=adata_train,
     annot='rctd_cluster', 
-    max_epochs=35, 
-    learning_rate=1e-3, 
+    max_epochs=250, 
+    learning_rate=5e-4, 
     spatial_dim=64,
     batch_size=512,
     threshold_lambda=1e-4,
-    test_mode=True,
+    test_mode=False,
     save_dir='/ix/djishnu/shared/djishnu_kor11/'
 )
 

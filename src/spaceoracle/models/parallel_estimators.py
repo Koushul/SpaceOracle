@@ -107,6 +107,8 @@ class RotatedTensorDataset(Dataset):
             torch.from_numpy(np.array(self.y_cell[idx])).float(),
             torch.from_numpy(self.spatial_features[idx]).float()
         )
+    
+
 
 class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
@@ -353,8 +355,8 @@ class SpatialCellularProgramsEstimator:
         return _data
 
 
-    def fit(self, num_epochs=10, threshold_lambda=1e-4, discard=50, learning_rate=2e-4, batch_size=512, 
-            use_ARD=False, clip_betas=False, testing=False, pbar=None):
+    def fit(self, num_epochs=10, threshold_lambda=1e-4, learning_rate=2e-4, batch_size=512, 
+            use_ARD=False, pbar=None, discard=50):
         sp_maps, X, y, cluster_labels = self.init_data()
 
         self.models = {}
@@ -380,9 +382,6 @@ class SpatialCellularProgramsEstimator:
 
         
         for cluster in np.unique(cluster_labels):
-            if testing: 
-                cluster = testing
-
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
 
@@ -452,18 +451,6 @@ class SpatialCellularProgramsEstimator:
 
                 r2_ard = r2_score(y_cell, y_pred)
             
-            if clip_betas:
-                _betas = np.clip(_betas, -clip_betas, clip_betas)
-            
-            if testing:
-                return {
-                    'y_pred': y_pred, 
-                    'r2_ard': r2_ard,
-                    'betas': _betas,
-                    'coefs': coefs,
-                    'cluster': cluster,
-                    'X_cell': X_cell
-                }
 
             loader = DataLoader(
                 RotatedTensorDataset(
@@ -472,25 +459,42 @@ class SpatialCellularProgramsEstimator:
                     y_cell,
                     cluster,
                     self.spatial_features.iloc[mask].values,
-                    rotate_maps=True
+                    rotate_maps=False
                 ),
                 batch_size=batch_size, shuffle=True
             )
 
             assert _betas.shape[0] == len(self.modulators)+1
 
-            model = CellularNicheNetwork(
-                n_modulators = len(self.modulators), 
-                anchors=_betas,
-                spatial_dim=self.spatial_dim,
-                n_clusters=self.n_clusters
-            ).to(self.device)
+            _m = self.models.get(0, None)
+
+            if _m is None:
+                model = CellularNicheNetwork(
+                    n_modulators = len(self.modulators), 
+                    anchors=_betas,
+                    spatial_dim=self.spatial_dim,
+                    n_clusters=self.n_clusters
+                ).to(self.device)
+
+            else:
+                model = copy.deepcopy(_m).to(self.device)
+
+            # model = CellularNicheNetwork(
+            #         n_modulators = len(self.modulators), 
+            #         anchors=_betas,
+            #         spatial_dim=self.spatial_dim,
+            #         n_clusters=self.n_clusters
+            #     ).to(self.device)
 
             criterion = torch.nn.MSELoss()
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
             
             for epoch in range(num_epochs):
+                best_r_score = -np.inf
+                current_r_score = -np.inf
+                best_model = copy.deepcopy(model)
+
                 model.train()
                 epoch_loss = 0
                 all_y_true = []
@@ -502,16 +506,29 @@ class SpatialCellularProgramsEstimator:
                     optimizer.zero_grad()
                     outputs = model(spatial_maps, inputs, spatial_features)
                     loss = criterion(outputs, targets)
-                    loss += torch.mean(outputs.mean(0) - model.anchors) * 1e-4
+                    loss += torch.mean(outputs.mean(0) - model.anchors) * 1e-3
                     loss.backward()
                     optimizer.step()
                     
                     epoch_loss += loss.item()
                     all_y_true.extend(targets.cpu().detach().numpy())
                     all_y_pred.extend(outputs.cpu().detach().numpy())
-                    # pbar.desc = f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}'
+
                     pbar.desc = f'{self.target_gene} | {cluster+1}/{self.n_clusters}'
                     pbar.update(len(targets))
 
+                r_score = r2_score(all_y_true, all_y_pred)
+                if r_score > 0 and abs(current_r_score - r_score) < 0.01:
+                    pbar.update(len(loader)*batch_size)
+                    print(best_r_score, r_score)
+                    print(f'*Early* stopping at {cluster} | {epoch}')
+                    break
+            
+                if r_score > best_r_score:
+                    best_r_score = r_score
+                    best_model = copy.deepcopy(model) 
+
+                current_r_score = r_score
+
             print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
-            self.models[cluster] = model
+            self.models[cluster] = best_model
