@@ -214,12 +214,10 @@ class CellularNicheNetwork(nn.Module):
             nn.Linear(128, self.dim)
         )
 
-        self.output_activation = nn.Tanh()
+        # self.output_activation = nn.Tanh()
         # self.output_activation = nn.Sigmoid()
         # self.output_activation = nn.GELU()
-        # self.output_activation = nn.Identity()
-
-        self.anchors[0] = 1
+        self.output_activation = nn.Identity()
 
 
     def get_betas(self, spatial_maps, spatial_features):

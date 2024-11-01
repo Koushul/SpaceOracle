@@ -502,6 +502,7 @@ class SpatialCellularProgramsEstimator:
                     optimizer.zero_grad()
                     outputs = model(spatial_maps, inputs, spatial_features)
                     loss = criterion(outputs, targets)
+                    loss += torch.mean(outputs.mean(0) - model.anchors) * 1e-4
                     loss.backward()
                     optimizer.step()
                     
