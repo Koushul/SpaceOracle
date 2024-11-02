@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 from sklearn.linear_model import ARDRegression
 from group_lasso import GroupLasso
 from spaceoracle.models.spatial_map import xyc2spatial_fast
@@ -466,35 +466,31 @@ class SpatialCellularProgramsEstimator:
 
             assert _betas.shape[0] == len(self.modulators)+1
 
-            _m = self.models.get(0, None)
+            # _m = self.models.get(0, None)
 
-            if _m is None:
-                model = CellularNicheNetwork(
-                    n_modulators = len(self.modulators), 
-                    anchors=_betas,
-                    spatial_dim=self.spatial_dim,
-                    n_clusters=self.n_clusters
-                ).to(self.device)
-
-            else:
-                model = copy.deepcopy(_m).to(self.device)
-
-            # model = CellularNicheNetwork(
+            # if _m is None:
+            #     model = CellularNicheNetwork(
             #         n_modulators = len(self.modulators), 
             #         anchors=_betas,
             #         spatial_dim=self.spatial_dim,
             #         n_clusters=self.n_clusters
             #     ).to(self.device)
 
+            # else:
+            #     model = copy.deepcopy(_m).to(self.device)
+
+            model = CellularNicheNetwork(
+                    n_modulators = len(self.modulators), 
+                    anchors=_betas,
+                    spatial_dim=self.spatial_dim,
+                    n_clusters=self.n_clusters
+                ).to(self.device)
+
             criterion = torch.nn.MSELoss()
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
 
             
             for epoch in range(num_epochs):
-                best_r_score = -np.inf
-                current_r_score = -np.inf
-                best_model = copy.deepcopy(model)
-
                 model.train()
                 epoch_loss = 0
                 all_y_true = []
@@ -506,8 +502,10 @@ class SpatialCellularProgramsEstimator:
                     optimizer.zero_grad()
                     outputs = model(spatial_maps, inputs, spatial_features)
                     loss = criterion(outputs, targets)
-                    loss += torch.mean(outputs.mean(0) - model.anchors) * 1e-3
+                    loss += torch.mean(outputs.mean(0) - model.anchors) * 1e-4
                     loss.backward()
+
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0, norm_type=2)
                     optimizer.step()
                     
                     epoch_loss += loss.item()
@@ -517,18 +515,6 @@ class SpatialCellularProgramsEstimator:
                     pbar.desc = f'{self.target_gene} | {cluster+1}/{self.n_clusters}'
                     pbar.update(len(targets))
 
-                r_score = r2_score(all_y_true, all_y_pred)
-                if r_score > 0 and abs(current_r_score - r_score) < 0.01:
-                    pbar.update(len(loader)*batch_size)
-                    print(best_r_score, r_score)
-                    print(f'*Early* stopping at {cluster} | {epoch}')
-                    break
-            
-                if r_score > best_r_score:
-                    best_r_score = r_score
-                    best_model = copy.deepcopy(model) 
-
-                current_r_score = r_score
 
             print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
-            self.models[cluster] = best_model
+            self.models[cluster] = model
