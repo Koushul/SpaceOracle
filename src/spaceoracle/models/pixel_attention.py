@@ -167,6 +167,38 @@ class NicheAttentionNetwork(nn.Module):
     
 
 class CellularNicheNetwork(nn.Module):
+
+    @staticmethod
+    def make_vision_model(input_channels=1, out_dim=128, kernel_size=3):
+
+        return nn.Sequential(
+            weight_norm(nn.Conv2d(input_channels, 32, kernel_size=kernel_size, padding='same')),
+            nn.BatchNorm2d(32),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            weight_norm(nn.Conv2d(32, 64, kernel_size=kernel_size, padding='same')),
+            nn.BatchNorm2d(64),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            weight_norm(nn.Conv2d(64, out_dim, kernel_size=kernel_size, padding='same')),
+            nn.BatchNorm2d(out_dim),
+            nn.PReLU(init=0.1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten()
+        )
+    
+    @classmethod
+    def from_pretrained(cls, trained_model, n_modulators, anchors=None, spatial_dim=64, n_clusters=7):
+        cnn = cls.make_vision_model()
+        cnn.load_state_dict(trained_model.conv_layers.state_dict())
+        model = cls(n_modulators, anchors, spatial_dim, n_clusters)
+        model.conv_layers = cnn
+        return model
+
      
     def __init__(self, n_modulators, anchors=None, spatial_dim=64, n_clusters=7):
         super().__init__()
@@ -183,22 +215,7 @@ class CellularNicheNetwork(nn.Module):
         # self.conditional_conv = nn.Conv2d(self.in_channels, self.in_channels, 1)
         # self.sigmoid = nn.Sigmoid()
 
-        self.conv_layers = nn.Sequential(
-            weight_norm(nn.Conv2d(self.in_channels, 32, kernel_size=3, padding='same')),
-            nn.PReLU(init=0.1),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            weight_norm(nn.Conv2d(32, 64, kernel_size=3, padding='same')),
-            nn.PReLU(init=0.1),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-
-            weight_norm(nn.Conv2d(64, 128, kernel_size=3, padding='same')),
-            nn.PReLU(init=0.1),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten()
-        )
+        self.conv_layers = self.make_vision_model(input_channels=self.in_channels)
 
         self.spatial_features_mlp = nn.Sequential(
             nn.Linear(n_clusters, 32),
@@ -214,12 +231,10 @@ class CellularNicheNetwork(nn.Module):
             nn.Linear(128, self.dim)
         )
 
-        self.output_activation = nn.Tanh()
+        # self.output_activation = nn.Tanh()
         # self.output_activation = nn.Sigmoid()
         # self.output_activation = nn.GELU()
-        # self.output_activation = nn.Identity()
-
-        self.anchors[0] = 1
+        self.output_activation = nn.Identity()
 
 
     def get_betas(self, spatial_maps, spatial_features):

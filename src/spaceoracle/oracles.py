@@ -173,6 +173,10 @@ class OracleQueue:
         return len(glob.glob(f'{self.model_dir}/*.orphan'))
     
     @property
+    def agents(self):
+        return len(glob.glob(f'{self.model_dir}/*.lock'))
+    
+    @property
     def remaining_genes(self):
         # completed_paths = glob.glob(f'{self.model_dir}/*.pkl')
         # completed_paths = glob.glob(f'{self.model_dir}/*.csv')
@@ -265,6 +269,33 @@ class SpaceOracle(Oracle):
 
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
+
+
+    def watch(self, sleep=20):
+        _manager = enlighten.get_manager()
+
+        gene_bar = _manager.counter(
+            total=len(self.queue.all_genes), 
+            desc=f'... initializing ...', 
+            unit='genes',
+            color='green',
+            autorefresh=True,
+        )
+
+        try:
+
+            while not self.queue.is_empty:
+                if os.path.exists(self.save_dir+'/process.kill'):
+                    print('Found death file. Killing process')
+                    break
+
+                gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
+                gene_bar.desc = f'🕵️️ {self.queue.agents} agents'
+                gene_bar.refresh()
+                time.sleep(sleep)
+
+        except KeyboardInterrupt:
+            pass
 
     
     def run(self):
@@ -404,7 +435,6 @@ class SpaceOracle(Oracle):
 
     @staticmethod
     def load_betadata(gene, save_dir):
-        # return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
         return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
 
     # @torch.no_grad()
