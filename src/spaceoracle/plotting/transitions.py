@@ -1,9 +1,9 @@
-import scanpy as sc 
 import numpy as np 
 import pandas as pd 
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -12,29 +12,17 @@ from sklearn.neighbors import NearestNeighbors
 from pqdm.processes import pqdm
 from velocyto.estimation import colDeltaCorpartial, colDeltaCor
 
-from .layout import view_spatial3D
-
-def compare_gex(adata, annot, goi, n_neighbors=15, n_pcs=20, show_paga=True, seed=123, figsize=(10,5)):
-        sc.tl.pca(adata, svd_solver='arpack')
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
-        sc.tl.diffmap(adata)
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X_diffmap')
-        sc.tl.paga(adata, groups=annot)
-
-        if show_paga:
-            sc.pl.paga(adata)
-        
-        sc.tl.draw_graph(adata, init_pos='paga', random_state=seed)
-        # sc.pl.draw_graph(adata, color=annot, legend_loc='on data', show=False)
-        sc.pl.draw_graph(adata, color=[goi, annot],
-                 layer="imputed_count", use_raw=False, cmap="viridis")
-
 def plot_quiver(grid_points, vector_field, background=None, ax=None):
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
 
     if background is not None:
-        ax.scatter(background['X'], background['Y'], c=background['annot'], alpha=0.3, s=2)
+        cmap = plt.get_cmap('tab20')
+        celltypes = np.unique(background['annot'])
+        category_colors = {ct: cmap(i / len(celltypes)) for i, ct in enumerate(celltypes)}
+        colors = [category_colors[ct] for ct in background['annot']]
+
+        ax.scatter(background['X'], background['Y'], c=colors, alpha=0.3, s=2)
 
     magnitudes = np.linalg.norm(vector_field, axis=1)
     indices = magnitudes > 0
@@ -120,37 +108,54 @@ def estimate_transition_probabilities(adata, delta_X, embedding=None, n_neighbor
     delta_X = np.array(delta_X)
     gene_mtx = adata.layers['imputed_count']
     
-    if random_neighbors:
-        P = np.zeros((n_cells, n_cells))
-        
-        cells = np.arange(n_cells)
-        for i in range(n_cells):
-            indices = np.random.choice(np.delete(cells, i), size=n_neighbors, replace=False)
-            P[i, indices] = 1
-    elif n_neighbors:
-        P = np.zeros((n_cells, n_cells))
+    if n_neighbors is None:
 
-        nn = NearestNeighbors(n_neighbors=n_neighbors+1, n_jobs=n_jobs)
-        nn.fit(embedding)
-        _, indices = nn.kneighbors(embedding)
-
-        rows = np.repeat(np.arange(n_cells), n_neighbors+1)
-        cols = indices.flatten()
-        P[rows, cols] = 1
-    else:
         P = np.ones((n_cells, n_cells))
+
+        corr = colDeltaCor(
+            np.ascontiguousarray(gene_mtx.T), 
+            np.ascontiguousarray(delta_X.T), 
+            threads=n_jobs
+            )
     
+    else:
+
+        P = np.zeros((n_cells, n_cells))
+
+        n_neighbors = min(n_cells, n_neighbors)
+        
+        if random_neighbors:
+            
+            indices = []
+            cells = np.arange(n_cells)
+            for i in range(n_cells):
+                i_indices = np.random.choice(np.delete(cells, i), size=n_neighbors, replace=False)
+                P[i, i_indices] = 1
+                indices.append(i_indices)
+            
+            indices = np.array(indices)
+
+        else: 
+
+            nn = NearestNeighbors(n_neighbors=n_neighbors, n_jobs=n_jobs)
+            nn.fit(embedding)
+            _, indices = nn.kneighbors(embedding)
+
+            rows = np.repeat(np.arange(n_cells), n_neighbors)
+            cols = indices.flatten()
+            P[rows, cols] = 1
+
+        corr = colDeltaCorpartial(
+            np.ascontiguousarray(gene_mtx.T), 
+            np.ascontiguousarray(delta_X.T), 
+            indices, threads=n_jobs
+            )
+
     np.fill_diagonal(P, 0)
-
-    corr = colDeltaCorpartial(
-        np.ascontiguousarray(gene_mtx.T), 
-        np.ascontiguousarray(delta_X.T), 
-        indices, threads=n_jobs
-        )
-
+    
     corr = np.nan_to_num(corr, nan=1)
 
-    P *= np.exp(corr / T)   # naive
+    P *= np.exp(corr / T)   
     P /= P.sum(1)[:, None]
 
     # args = [[i, delta_X[i], gene_mtx, indices, n_cells, T] for i in range(n_cells)]
@@ -236,10 +241,10 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
     vector_field = vector_field.reshape(-1, 2)
     
     ### for testing, delete or save properly later
-    adata.uns['grid_points'] = grid_points
-    adata.uns['vector_field'] = vector_field
-    adata.uns['P'] = P
-    adata.uns['V_simulated'] = V_simulated
+    # adata.uns['grid_points'] = grid_points
+    # adata.uns['vector_field'] = vector_field
+    adata.uns['nn_transition_P'] = P
+    # adata.uns['V_simulated'] = V_simulated
     ###
 
     vector_field *= vector_scale
@@ -249,7 +254,7 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
         background = {
             'X': embedding[:, 0], 
             'Y': embedding[:, 1], 
-            'annot': list(adata.obs[annot])
+            'annot': list(adata.obs[annot]),
         }
     plot_quiver(grid_points, vector_field, background=background)
 
@@ -296,13 +301,13 @@ vector_scale=0.1, grid_scale=1, n_jobs=1):
         vector_field[grid_idx_x, grid_idx_y, grid_idx_z] = nbr_vector
     
     ### for testing, delete or save properly later
-    adata.uns['grid_points'] = grid_points
-    adata.uns['vector_field'] = vector_field
-    adata.uns['P'] = P
-    adata.uns['V_simulated'] = V_simulated
+    # adata.uns['grid_points'] = grid_points
+    adata.uns['nn_transition_P'] = P
+    # adata.uns['P'] = P
+    # adata.uns['V_simulated'] = V_simulated
     ###
 
-    vector_field = adata.uns['vector_field'] * vector_scale
+    vector_field = vector_field * vector_scale
     
     if annot is not None:
         background = pd.DataFrame({
@@ -315,3 +320,48 @@ vector_scale=0.1, grid_scale=1, n_jobs=1):
         background = None
 
     plot_vectorfield(grid_points, vector_field, background)
+
+
+def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
+
+    if cluster is not None:
+        adata = adata.copy()
+        cell_idxs = np.where(adata.obs[annot] == cluster)[0]
+
+        delta_X = delta_X[cell_idxs, :]
+        embedding = embedding[cell_idxs, :]
+        adata = adata[adata.obs[annot] == cluster]
+
+        P = estimate_transition_probabilities(
+            adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
+
+    elif 'rand_transition_P' not in adata.uns:
+        # this it taking way too long
+        # P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=None, n_jobs=n_jobs)
+        
+        # quicker alternative, although may need adjusting
+        P = estimate_transition_probabilities(
+            adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
+        adata.uns['rand_transition_P'] = P
+    
+    else:
+        P = adata.uns['rand_transition_P']
+
+    x = embedding[:, 0]
+    y = embedding[:, 1]
+
+    intensity = np.sum(P, axis=0)
+    
+    if log_P:
+        zero_mask = (intensity == 0)
+        intensity = np.log1p(intensity)
+        intensity[zero_mask] = 0
+
+    plt.scatter(x, y, c=intensity, cmap='coolwarm', s=1, alpha=0.9, label='Transition Probabilities')
+
+    plt.colorbar(label='log probability')
+    if cluster is not None:
+        plt.title(f'{cluster} Subset Transition Probabilities')
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()

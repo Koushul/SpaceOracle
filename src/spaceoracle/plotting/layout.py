@@ -5,6 +5,7 @@ import seaborn as sns
 from collections import defaultdict
 import numpy as np 
 import pandas as pd 
+import scanpy as sc 
 
 def view_spatial2D(adata, annot, figsize=None):
     if figsize is not None:
@@ -63,70 +64,29 @@ def view_spatial3D(adata, annot, flat=False, show=True):
     fig.show()
 
 
-def view_betas(so, regulator, target_gene, celltypes=None):
-    markers = ['o', 'X', '<', '^', 'v', 'D', '>']
-    cmaps = dict(zip(range(7), ['rainbow', 'cool', 'RdYlGn_r', 'spring_r', '', 'PuRd', 'Reds']))
-    # cmap = 'rainbow'
+def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, seed=123):
+
+    assert embedding in ['FR', 'PCA', 'UMAP', 'spatial'], f'{embedding} is not a valid embedding choice'
     
-    betadata = so.load_betadata(target_gene, so.save_dir)
-    beta_columns = [i for i in betadata.columns if i[:5] == 'beta_' and '$' not in i]
-    all_modulators = [i.replace('beta_', '') for i in beta_columns]
+    sc.tl.pca(adata, svd_solver='arpack')
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
 
-    df = betadata
+    if embedding == 'PCA':
+        sc.pl.pca(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis')
+    
+    elif embedding == 'UMAP':
+        sc.tl.umap(adata)
+        sc.pl.umap(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis')
 
-    plot_for = regulator
-    cell_map = dict(zip(df[so.annot], df[so.annot]))
+    elif embedding == 'spatial':
+        sc.pl.spatial(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis', spot_size=50)
 
-    fig, (ax, cax) = plt.subplots(1, 2, dpi=80, figsize=(11, 9), gridspec_kw={'width_ratios': [4, 0.5]})
+    elif embedding == 'FR': 
 
-    if celltypes is None:
-        celltypes = np.unique(df[so.annot])
+        sc.tl.diffmap(adata)
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X_diffmap')
+        sc.tl.paga(adata, groups=annot)
+        sc.pl.paga(adata)
 
-    for i in celltypes:
-        betas_df = df[['beta0']+['beta_'+i for i in all_modulators]][df[so.annot]==i]
-
-        sns.scatterplot(
-            data=betas_df.join(df[['x', 'y', so.annot]]),
-            x='x', 
-            y='y',
-            hue=plot_for,
-            palette=cmaps[i],
-            s=25,
-            alpha=1,
-            linewidth=0.5,
-            edgecolor='black',
-            legend=False,
-            style=so.annot,
-            markers=markers,
-            ax=ax
-        )
-    ax.axis('off')
-
-    norm = None
-    cbar_width = 0.15  # Width of each colorbar
-    cbar_height = 0.8 / len(cmaps)  # Height of each colorbar
-    for i, cmap_name in cmaps.items():
-        if i not in [0, 1, 2]:
-            continue
-        cmap = plt.get_cmap(cmap_name)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cax_i = cax.inset_axes([0.2, 0.95 - (i+1)*cbar_height*2.5, cbar_width, cbar_height*1.5])
-        cbar = fig.colorbar(sm, cax=cax_i, orientation='vertical')
-        cbar.ax.tick_params(labelsize=9)  # Reduce tick label size
-        cbar.ax.set_title(f'{cell_map[i]}', fontsize=12, pad=8)  # Reduce title size and padding
-
-    cax.set_ylabel(plot_for, fontsize=8)
-    cax.axis('off')
-
-    unique_styles = sorted(set(df['rctd_celltypes']))
-    style_handles = [plt.Line2D([0], [0], marker=m, color='w', markerfacecolor='gray', 
-                    markersize=10, linestyle='None', alpha=1) 
-                    for m in markers][:len(unique_styles)]
-    ax.legend(style_handles, unique_styles, ncol=1,
-        title='Cell types', loc='upper left', 
-        frameon=False)
-
-    ax.set_title(f'{plot_for} > {target_gene}', fontsize=15)
-    plt.tight_layout()
-    plt.show()
+        sc.tl.draw_graph(adata, init_pos='paga', random_state=seed)
+        sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis")
