@@ -79,6 +79,11 @@ def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, see
         sc.pl.umap(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis')
 
     elif embedding == 'spatial':
+        x = adata.obsm['spatial'][:, 0]
+        y = adata.obsm['spatial'][:, 1] * -1
+
+        adata = adata.copy()
+        adata.obsm['spatial'] = np.vstack([x, y]).T
         sc.pl.spatial(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis', spot_size=50)
 
     elif embedding == 'FR': 
