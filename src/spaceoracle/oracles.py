@@ -1,7 +1,7 @@
+from abc import ABC
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-from abc import ABC, abstractmethod
 import numpy as np
 import sys
 import gc
@@ -11,9 +11,8 @@ import pandas as pd
 import pickle
 import torch
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from tqdm import tqdm
-from pqdm.processes import pqdm
 import os
 import datetime
 import re
@@ -25,11 +24,8 @@ from sklearn.preprocessing import MinMaxScaler
 import warnings
 from sklearn.linear_model import Ridge
 
-from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
-
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
-from .models.estimators import PixelAttention, device
 from .models.pixel_attention import NicheAttentionNetwork
 from .models.parallel_estimators import SpatialCellularProgramsEstimator, received_ligands
 
@@ -122,11 +118,13 @@ class BetaOutput:
     betas: np.ndarray
     modulator_genes: List[str]
     modulator_gene_indices: List[int]
-    ligands: List[str]
-    receptors: List[str]
-    tfl_ligands: List[str]
-    tfl_regulators: List[str]
-    wbetas: Optional[np.ndarray] = None
+    ligands: Optional[List[str]] = None
+    receptors: Optional[List[str]] = None
+    tfl_ligands: Optional[List[str]] = None
+    tfl_regulators: Optional[List[str]] = None
+    ligand_receptor_pairs: Optional[List[Tuple[str, str]]] = None
+    tfl_pairs: Optional[List[Tuple[str, str]]] = None
+    wbetas: Optional[Tuple[str, pd.DataFrame]] = None
 
 
 class OracleQueue:
@@ -171,6 +169,10 @@ class OracleQueue:
     @property
     def num_orphans(self):
         return len(glob.glob(f'{self.model_dir}/*.orphan'))
+    
+    @property
+    def agents(self):
+        return len(glob.glob(f'{self.model_dir}/*.lock'))
     
     @property
     def remaining_genes(self):
@@ -228,7 +230,8 @@ class SpaceOracle(Oracle):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', grn=None,
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05, test_mode=False, threshold_lambda=3e3, tf_ligand_cutoff=0.01):
+    layer='imputed_count', alpha=0.05, test_mode=False, 
+    threshold_lambda=3e3, tf_ligand_cutoff=0.01, radius=200):
         
         super().__init__(adata)
         if grn is None:
@@ -252,19 +255,40 @@ class SpaceOracle(Oracle):
         self.tf_ligand_cutoff = tf_ligand_cutoff
         self.beta_dict = None
         self.coef_matrix = None
-
-        # self.imbue_adata_with_space(
-        #     self.adata, 
-        #     annot=self.annot,
-        #     spatial_dim=self.spatial_dim,
-        #     in_place=True
-        # )
+        self.radius = radius
 
         self.estimator_models = {}
         self.ligands = set()
 
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
+
+
+    def watch(self, sleep=20):
+        _manager = enlighten.get_manager()
+
+        gene_bar = _manager.counter(
+            total=len(self.queue.all_genes), 
+            desc=f'... initializing ...', 
+            unit='genes',
+            color='green',
+            autorefresh=True,
+        )
+
+        try:
+
+            while not self.queue.is_empty:
+                if os.path.exists(self.save_dir+'/process.kill'):
+                    print('Found death file. Killing process')
+                    break
+
+                gene_bar.count = len(self.queue.all_genes) - len(self.queue.remaining_genes)
+                gene_bar.desc = f'🕵️️ {self.queue.agents} agents'
+                gene_bar.refresh()
+                time.sleep(sleep)
+
+        except KeyboardInterrupt:
+            pass
 
     
     def run(self):
@@ -279,14 +303,6 @@ class SpaceOracle(Oracle):
             autorefresh=True,
         )
 
-        # train_bar = _manager.counter(
-        #     total=self.max_epochs, 
-        #     desc='Training', 
-        #     unit='epochs',
-        #     color='red',
-        #     autorefresh=True,
-        # )
-
         train_bar = _manager.counter(
             total=self.adata.shape[0]*self.max_epochs, 
             desc=f'Ready...', unit='cells',
@@ -298,18 +314,6 @@ class SpaceOracle(Oracle):
         while not self.queue.is_empty and not os.path.exists(self.save_dir+'/process.kill'):
             gene = next(self.queue)
 
-            # estimator = ViTEstimatorV2(self.adata, target_gene=gene)
-
-            # estimator = PixelAttention(
-            #     self.adata, target_gene=gene, layer=self.layer)
-
-            # estimator = ProbabilisticPixelAttention(
-            #     self.adata, target_gene=gene, layer=self.layer)
-
-            # estimator = ProbabilisticPixelModulators(
-            #     self.adata, target_gene=gene, layer=self.layer,
-            #     annot=self.annot)
-            
             estimator = SpatialCellularProgramsEstimator(
                 adata=self.adata,
                 target_gene=gene,
@@ -336,20 +340,6 @@ class SpaceOracle(Oracle):
 
                 self.queue.create_lock(gene)
 
-                # estimator.fit(
-                #     annot=self.annot, 
-                #     max_epochs=self.max_epochs, 
-                #     learning_rate=self.learning_rate, 
-                #     spatial_dim=self.spatial_dim,
-                #     batch_size=self.batch_size,
-                #     mode='train_test',
-                #     rotate_maps=self.rotate_maps,
-                #     alpha=self.alpha,
-                #     parallel=False,
-                #     pbar=train_bar
-                # )
-
-
                 estimator.fit(
                     num_epochs=self.max_epochs, 
                     threshold_lambda=self.threshold_lambda, 
@@ -358,23 +348,7 @@ class SpaceOracle(Oracle):
                     pbar=train_bar
                 )
 
-                # estimator.betadata.to_csv(f'{self.save_dir}/{gene}_betadata.csv')
                 estimator.betadata.to_parquet(f'{self.save_dir}/{gene}_betadata.parquet')
-
-
-                # (model, beta_dists, is_real, regulators, target_gene) = estimator.export()
-                # assert target_gene == gene
-
-                # with open(f'{self.save_dir}/{target_gene}_estimator.pkl', 'wb') as f:
-                #     pickle.dump(
-                #         {
-                #             'model': model.state_dict(), 
-                #             'regulators': regulators,
-                #             'beta_dists': beta_dists,
-                #             'is_real': is_real,
-                #         }, 
-                #         f
-                #     )
 
                 self.trained_genes.append(gene)
                 self.queue.delete_lock(gene)
@@ -404,7 +378,6 @@ class SpaceOracle(Oracle):
 
     @staticmethod
     def load_betadata(gene, save_dir):
-        # return pd.read_csv(f'{save_dir}/{gene}_betadata.csv', index_col=0)
         return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
 
     # @torch.no_grad()
@@ -456,58 +429,133 @@ class SpaceOracle(Oracle):
         modulators = [f'beta_{m}' for m in modulators]
 
         return BetaOutput(
-            betas=betadata[['beta0']+beta_columns],
+            betas=betadata[['beta0']+beta_columns].astype(np.float32),
             modulator_genes=modulators,
             modulator_gene_indices=modulator_gene_indices,
             ligands=ligands,
             receptors=receptors,
             tfl_ligands=tfl_ligands,
-            tfl_regulators=tfl_regulators
+            tfl_regulators=tfl_regulators,
+            ligand_receptor_pairs=tuple(zip(ligands, receptors)),
+            tfl_pairs=tuple(zip(tfl_ligands, tfl_regulators))
         )
     
-    def _get_wbetas_dict(self, betas_dict, gene_mtx, n_jobs=1):
+    def _get_wbetas_dict(self, betas_dict, gene_mtx):
 
         gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
 
         if len(self.ligands) > 0:
             weighted_ligands = received_ligands(
-                self.adata.obsm['spatial'], 
-                gex_df[list(self.ligands)]
+                xy=self.adata.obsm['spatial'], 
+                lig_df=gex_df[list(self.ligands)],
+                radius=self.radius
             )
-        else:
-            weighted_ligands = None
 
-        args = [(gene, weighted_ligands, gex_df, betaoutput) for gene, betaoutput in betas_dict.items()]
 
-        results = pqdm(
-            args,
-            self._combine_gene_wbetas,
-            n_jobs=n_jobs, 
-            argument_type='args'
-        )
-
-        for gene, betas_df in results:
+        for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions'):
+            betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
             betas_dict[gene].wbetas = betas_df
 
         return betas_dict
 
-    def _combine_gene_wbetas(self, gene, received_ligands, gex_df, betaoutput):
+    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betaoutput):
 
-        betas_df = betaoutput.betas
-
-        ligands = betaoutput.ligands
-        receptors = betaoutput.receptors
-        tfl_regulators = betaoutput.tfl_regulators
-        tfl_ligands= betaoutput.tfl_ligands
         modulators = betaoutput.modulator_genes
 
-        betas_df = self._get_gene_wbetas(
-            received_ligands, betas_df, gex_df, ligands, receptors, tfl_regulators, tfl_ligands)
+        betas_df = self._get_gene_wbetas_vectorized(
+            rw_ligands=rw_ligands, 
+            betas_df=betaoutput.betas, 
+            gex_df=gex_df, 
+            ligands=betaoutput.ligands,
+            receptors=betaoutput.receptors,
+            tfl_ligands=betaoutput.tfl_ligands,
+            tfl_regulators=betaoutput.tfl_regulators,
+            ligand_receptor_pairs=betaoutput.ligand_receptor_pairs,
+            tfl_pairs=betaoutput.tfl_pairs
+        )
 
         betas_df = betas_df[modulators]
-        return gene, betas_df
         
+        # betas_df = pd.DataFrame(columns=['beta_'+i for i in modulators], index=self.adata.obs.index)
+        return gene, betas_df
     
+
+    def _get_gene_wbetas_vectorized(self, rw_ligands, betas_df, gex_df, ligands, receptors, tfl_ligands, tfl_regulators, ligand_receptor_pairs, tfl_pairs):
+        obs_index = self.adata.obs.index
+
+        _df_lr = pd.DataFrame(
+            betas_df[[f'beta_{a}${b}' for a, b in ligand_receptor_pairs]*2].values * \
+                rw_ligands[ligands].join(gex_df[receptors]).values,
+            index=obs_index,
+            columns=[f'beta_{r}' for r in receptors]+[f'beta_{l}' for l in ligands]
+        )
+
+        _df_tfl = pd.DataFrame(
+            betas_df[[f'beta_{a}#{b}' for a, b in tfl_pairs]*2].values * \
+                rw_ligands[tfl_ligands].join(gex_df[tfl_regulators]).values,
+            index=obs_index,
+            columns=[f'beta_{r}' for r in tfl_regulators]+[f'beta_{l}' for l in tfl_ligands]
+        )
+
+        return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
+
+
+    def _get_gene_wbetas2(self, received_ligands, betas_df, gex_df, ligand_receptor_pairs, tfl_pairs):
+        # Pre-compute common values and create empty DataFrames with proper dimensions
+        obs_index = self.adata.obs.index
+        result_dfs = []
+
+        if ligand_receptor_pairs:
+            # Vectorized computation for receptor-ligand pairs
+            for lig, rec in ligand_receptor_pairs:
+                beta_key = f'beta_{lig}${rec}'
+                # dy/dR: beta * wL
+                result_dfs.append(
+                    pd.DataFrame(
+                        (betas_df[beta_key] * received_ligands[lig]).values,
+                        columns=[f'beta_{rec}'],
+                        index=obs_index
+                    )
+                )
+                # dy/dwL: beta * R
+                result_dfs.append(
+                    pd.DataFrame(
+                        (betas_df[beta_key] * gex_df[rec]).values,
+                        columns=[f'beta_{lig}'],
+                        index=obs_index
+                    )
+                )
+        
+        if tfl_pairs:
+            # Vectorized computation for TF-ligand pairs
+            for lig, reg in tfl_pairs:
+                beta_key = f'beta_{lig}#{reg}'
+                # dy/dTF: beta * wL
+                result_dfs.append(
+                    pd.DataFrame(
+                        (betas_df[beta_key] * received_ligands[lig]).values,
+                        columns=[f'beta_{reg}'],
+                        index=obs_index
+                    )
+                )
+                # dy/dwL: beta * TF
+                result_dfs.append(
+                    pd.DataFrame(
+                        (betas_df[beta_key] * gex_df[reg]).values,
+                        columns=[f'beta_{lig}'],
+                        index=obs_index
+                    )
+                )
+        
+        # Combine all results
+        if result_dfs:
+            combined_df = pd.concat([betas_df] + result_dfs, axis=1)
+            return combined_df.groupby(lambda x: x, axis=1).sum()
+        
+        return betas_df
+
+    
+        
     def _get_gene_wbetas(self, received_ligands, betas_df, gex_df, ligands, receptors, tfl_regulators, tfl_ligands):
 
         b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
@@ -562,12 +610,12 @@ class SpaceOracle(Oracle):
             
             if _beta_out is not None:
                 r = np.array(_beta_out.modulator_gene_indices)
-                gene_gene_matrix[r, i] = _beta_out.wbetas.values[cell_index]
+                gene_gene_matrix[r, i] = _beta_out.wbetas[1].values[cell_index]
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, gene_mtx=None, target=None, n_propagation=3, gene_expr=0, n_jobs=1):
+    def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0):
         
         # clear downstream analyses
         for key in ['transition_probabilities', 'grid_points', 'vector_field']:
@@ -592,11 +640,12 @@ class SpaceOracle(Oracle):
         delta_simulated = delta_input.copy() 
 
         if self.beta_dict is None:
+            print('Computing beta_dict')
             self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
 
         for n in range(n_propagation):
 
-            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated, n_jobs)
+            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated)
 
             _simulated = np.array(
                 [self._perturb_single_cell(delta_simulated, i, beta_dict) 
