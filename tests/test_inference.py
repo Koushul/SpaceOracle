@@ -62,7 +62,7 @@ def test_space_oracle_inference(mock_adata, temp_dir):
     target = so.queue.completed_genes[0]
 
     perturbed_matrix_1 = so.perturb(
-        so.adata.to_df(layer='imputed_count').values,
+        gene_mtx=so.adata.to_df(layer='imputed_count').values,
         target=target, n_propagation=1
     )
 

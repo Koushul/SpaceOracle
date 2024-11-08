@@ -1,6 +1,7 @@
 import numpy as np 
 import pandas as pd 
 from tqdm import tqdm
+import torch.nn.functional as F
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -9,9 +10,9 @@ import plotly.express as px
 
 from scipy.stats import pearsonr
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
 from pqdm.processes import pqdm
 from velocyto.estimation import colDeltaCorpartial, colDeltaCor
-
 
 
 def plot_quiver(grid_points, vector_field, background=None, ax=None):
@@ -350,6 +351,8 @@ vector_scale=0.1, grid_scale=1, n_jobs=1):
 
 def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
 
+    n_neighbors=200
+
     if cluster is not None:
         adata = adata.copy()
         cell_idxs = np.where(adata.obs[annot] == cluster)[0]
@@ -359,7 +362,7 @@ def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_
         adata = adata[adata.obs[annot] == cluster]
 
         P = estimate_transition_probabilities(
-            adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
+            adata, delta_X, embedding, n_neighbors=n_neighbors, random_neighbors=True, n_jobs=n_jobs)
 
     elif 'transition_P' not in adata.uns:
         # this it taking way too long
@@ -379,11 +382,12 @@ def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_
     if log_P:
         P = np.where(P != 0, np.log(P), 0)
 
-    intensity = np.sum(P, axis=0)
+    intensity = np.sum(P, axis=0).reshape(-1, 1)
+    intensity = MinMaxScaler().fit_transform(intensity)
 
     plt.scatter(x, y, c=intensity, cmap='coolwarm', s=1, alpha=0.9, label='Transition Probabilities')
 
-    plt.colorbar(label='log probability')
+    plt.colorbar(label='Transition Odds Post-perturbation')
     if cluster is not None:
         plt.title(f'{cluster} Subset Transition Probabilities')
     plt.axis('off')

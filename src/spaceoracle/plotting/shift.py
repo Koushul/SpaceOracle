@@ -1,7 +1,7 @@
 import numpy as np 
 import pandas as pd 
+
 import matplotlib.pyplot as plt 
-import seaborn as sns 
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
 
@@ -14,14 +14,10 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     if missing_clusters:
         raise ValueError(f"Invalid cell types: {', '.join(missing_clusters)}")
 
-    if 'spatial_P' not in adata.uns:
-        P = estimate_transition_probabilities(
-            adata, delta_X, embedding, n_neighbors=n_neighbors, annot=annot, 
-            random_neighbors='even', n_jobs=n_jobs
-        )
-        adata.uns['spatial_P'] = P
-    else:
-        P = adata.uns['spatial_P']
+    P = estimate_transition_probabilities(
+        adata, delta_X, embedding, n_neighbors=n_neighbors, annot=annot, 
+        random_neighbors='even', n_jobs=n_jobs
+    )
 
     # Convert cell x cell -> cell x cell-type transition P
     unique_clusters, cluster_indices = np.unique(adata.obs[annot], return_inverse=True)
@@ -70,21 +66,15 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
 
     cmap = cm.get_cmap('tab10')
     rgb_values = [cmap(c)[:3] for c in colors]
-    # Black outline
-    plt.quiver(x_positions, y_positions, x_directions, y_directions, color='black',
-               angles="xy", scale_units="xy", scale=0.1, width=0.005)
-    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values,
-               angles="xy", scale_units="xy", scale=0.1, width=0.003)
+    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, scale=0.1,
+               angles="xy", scale_units="xy", linewidth=0.15, edgecolor='black', width=0.003)
 
-    
     # Place quiver anchors
     anchor_offset = 300
     for i, (dx, dy, label) in enumerate(zip(directions[:, 0], directions[:, 1], visual_clusters)):
-        # Position each anchor point away from the origin
         anchor_x = dx * anchor_offset
         anchor_y = dy * anchor_offset
         plt.quiver(0, 0, anchor_x, anchor_y, color=cmap(i), angles="xy", scale_units="xy", scale=1, width=0.005)
-        # Place the label near the anchor with further offset to avoid overlap
         plt.text(anchor_x * 2.1, anchor_y * 1.9, label, color=cmap(i), ha='center', va='center', fontsize=10)
 
     plt.axis('off')
