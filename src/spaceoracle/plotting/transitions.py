@@ -12,6 +12,8 @@ from sklearn.neighbors import NearestNeighbors
 from pqdm.processes import pqdm
 from velocyto.estimation import colDeltaCorpartial, colDeltaCor
 
+
+
 def plot_quiver(grid_points, vector_field, background=None, ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
@@ -103,7 +105,9 @@ def compute_probability(i, d_i, gene_mtx, indices, n_cells, T):
 
 ## CellOracle uses adapted Velocyto code
 ## This function is coded exactly as described in CellOracle paper
-def estimate_transition_probabilities(adata, delta_X, embedding=None, n_neighbors=200, random_neighbors=False, T=0.05, n_jobs=1):
+def estimate_transition_probabilities(adata, delta_X, embedding=None, n_neighbors=200, 
+random_neighbors=False, annot=None, T=0.05, n_jobs=1):
+
     n_cells, n_genes = adata.shape
     delta_X = np.array(delta_X)
     gene_mtx = adata.layers['imputed_count']
@@ -124,7 +128,29 @@ def estimate_transition_probabilities(adata, delta_X, embedding=None, n_neighbor
 
         n_neighbors = min(n_cells, n_neighbors)
         
-        if random_neighbors:
+        if random_neighbors == 'even':
+
+            cts = np.unique(adata.obs[annot])
+            ct_dict = {ct: np.where(adata.obs[annot] == ct)[0] for ct in cts}
+            cells_per_ct = round(n_neighbors / len(cts))
+
+            indices = []
+
+            for i in range(n_cells):
+                i_indices = []
+
+                for ct, ct_cells in ct_dict.items():
+
+                    sample = np.random.choice(ct_cells[ct_cells != i], size=cells_per_ct, replace=False)
+                    i_indices.extend(sample)
+
+                i_indices = np.array(i_indices)
+                P[i, i_indices] = 1
+                indices.append(i_indices)
+
+            indices = np.array(indices)
+
+        elif random_neighbors:
             
             indices = []
             cells = np.arange(n_cells)
@@ -335,27 +361,25 @@ def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_
         P = estimate_transition_probabilities(
             adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
 
-    elif 'rand_transition_P' not in adata.uns:
+    elif 'transition_P' not in adata.uns:
         # this it taking way too long
         # P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=None, n_jobs=n_jobs)
         
         # quicker alternative, although may need adjusting
         P = estimate_transition_probabilities(
             adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
-        adata.uns['rand_transition_P'] = P
+        adata.uns['transition_P'] = P
     
     else:
-        P = adata.uns['rand_transition_P']
+        P = adata.uns['transition_P']
 
     x = embedding[:, 0]
     y = embedding[:, 1]
 
-    intensity = np.sum(P, axis=0)
-    
     if log_P:
-        zero_mask = (intensity == 0)
-        intensity = np.log1p(intensity)
-        intensity[zero_mask] = 0
+        P = np.where(P != 0, np.log(P), 0)
+
+    intensity = np.sum(P, axis=0)
 
     plt.scatter(x, y, c=intensity, cmap='coolwarm', s=1, alpha=0.9, label='Transition Probabilities')
 
@@ -365,3 +389,5 @@ def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+    plt.tight_layout()
