@@ -450,7 +450,8 @@ class SpaceOracle(Oracle):
                 lig_df=gex_df[list(self.ligands)],
                 radius=self.radius
             )
-
+        else:
+            weighted_ligands = None
 
         for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions'):
             betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
