@@ -1,7 +1,25 @@
 import numpy as np 
 from numba import jit
 
-from .transitions import estimate_transitions_2D, estimate_transitions_3D
+from .transitions import estimate_transitions_2D, estimate_transitions_3D, view_probabilities
+from .shift import estimate_transitions
+
+
+def randomize_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=1,
+    visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], renormalize=False, n_jobs=1):
+
+    delta_X_rndm = np.copy(delta_X)
+    permute_rows_nsign(delta_X_rndm)
+
+    estimate_transitions(adata, delta_X_rndm , embedding, annot, n_neighbors,
+        vector_scale, visual_clusters, renormalize, n_jobs)
+    
+def randomize_view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
+    delta_X_rndm = np.copy(delta_X)
+    permute_rows_nsign(delta_X_rndm)
+
+    view_probabilities(adata, delta_X_rndm, embedding, cluster, annot, log_P, n_jobs)
+
 
 
 def randomize_transitions_2D(adata, delta_X, embedding, annot=None, normalize=True, 
