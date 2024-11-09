@@ -451,7 +451,7 @@ class SpaceOracle(Oracle):
                 radius=self.radius
             )
         else:
-            weighted_ligands = None
+            weighted_ligands = []
 
         for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions'):
             betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
@@ -616,7 +616,7 @@ class SpaceOracle(Oracle):
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
 
-    def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0):
+    def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0, cells=None):
         
         # clear downstream analyses
         for key in ['transition_probabilities', 'grid_points', 'vector_field']:
@@ -636,7 +636,11 @@ class SpaceOracle(Oracle):
         target_index = self.gene2index[target]  
         simulation_input = gene_mtx.copy()
 
-        simulation_input[:, target_index] = gene_expr   # ko target gene
+        if cells is None:
+            simulation_input[:, target_index] = gene_expr   # ko target gene
+        else:
+            simulation_input[cells, target_index] = gene_expr
+        
         delta_input = simulation_input - gene_mtx       # get delta X
         delta_simulated = delta_input.copy() 
 
