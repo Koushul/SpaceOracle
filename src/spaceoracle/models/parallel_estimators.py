@@ -114,6 +114,8 @@ class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
             cluster_annot='rctd_cluster', layer='imputed_count', 
             radius=200, tf_ligand_cutoff=0.01):
+        
+
         assert isinstance(adata, AnnData), 'adata must be an AnnData object'
         assert target_gene in adata.var_names, f'{target_gene} must be in adata.var_names'
         assert layer in adata.layers, f'{layer} must be in adata.layers'
