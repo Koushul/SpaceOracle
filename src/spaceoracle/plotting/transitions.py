@@ -261,6 +261,7 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
         if len(indices) <= 0:
             continue
         nbr_vector = np.mean(V_simulated[indices], axis=0)
+        nbr_vector *= len(indices)       # upweight vectors with lots of cells
             
         grid_idx_x, grid_idx_y = np.unravel_index(idx, (size_x, size_y))
         vector_field[grid_idx_x, grid_idx_y] = nbr_vector
@@ -323,6 +324,7 @@ vector_scale=0.1, grid_scale=1, n_jobs=1):
         if len(indices) <= 0:
             continue
         nbr_vector = np.mean(V_simulated[indices], axis=0)
+        nbr_vector *= len(indices)       # upweight vectors with lots of cells
         
         grid_idx_x, grid_idx_y, grid_idx_z = np.unravel_index(idx, (size_x, size_y, size_z))
         vector_field[grid_idx_x, grid_idx_y, grid_idx_z] = nbr_vector
