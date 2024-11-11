@@ -252,7 +252,7 @@ class SpatialCellularProgramsEstimator:
         )
 
 
-    def init_data(self):
+    def init_data(self, partial=False):
         if len(self.lr['pairs']) > 0:
             self.adata.uns['received_ligands'] = received_ligands(
                 self.adata.obsm['spatial'], 
@@ -283,7 +283,7 @@ class SpatialCellularProgramsEstimator:
             )
         else:
             self.adata.uns['ligand_regulator'] = pd.DataFrame(index=self.adata.obs.index)
-        
+
 
         self.xy = np.array(self.adata.obsm['spatial'])
         cluster_labels = np.array(self.adata.obs[self.cluster_annot])
@@ -377,10 +377,11 @@ class SpatialCellularProgramsEstimator:
                 auto_refresh=True
             )
 
-        print(f'Fitting {self.target_gene} with {len(self.modulators)} modulators')
-        print(f'\t{len(self.regulators)} Transcription Factors')
-        print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
-        print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
+        if num_epochs:
+            print(f'Fitting {self.target_gene} with {len(self.modulators)} modulators')
+            print(f'\t{len(self.regulators)} Transcription Factors')
+            print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
+            print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
 
         
         for cluster in np.unique(cluster_labels):
@@ -517,6 +518,6 @@ class SpatialCellularProgramsEstimator:
                     pbar.desc = f'{self.target_gene} | {cluster+1}/{self.n_clusters}'
                     pbar.update(len(targets))
 
-
-            print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
+            if num_epochs:
+                print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
             self.models[cluster] = model
