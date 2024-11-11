@@ -48,26 +48,26 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     x_directions = vectors[:, 0]
     y_directions = vectors[:, 1]
 
-    # Plot scatter
+    # Plot 
     categories = adata.obs[annot].astype('category')
     codes = categories.cat.codes
 
-    scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=0.5, cmap='tab10')
-    
-    handles, labels = scatter.legend_elements(num=len(unique_clusters))
-    plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
-
     # Plot quiver
-
-    # max_indices = np.argmax(P_ct, axis=1)
-    # colors = np.array([codes[i] for i in max_indices])
-    highest_transition = np.argmax(P, axis=1)
-    colors = [codes[i] for i in highest_transition]
+    max_indices = np.argmax(P_ct, axis=1)
+    colors = np.array([codes[i] for i in max_indices])
+    # highest_transition = np.argmax(P, axis=1)
+    # colors = [codes[i] for i in highest_transition]
 
     cmap = cm.get_cmap('tab10')
     rgb_values = [cmap(c)[:3] for c in colors]
-    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, scale=0.1,
-               angles="xy", scale_units="xy", linewidth=0.15, edgecolor='black', width=0.003)
+    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
+               scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
+
+    # Plot scatter
+    # scatter = plt.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
+    scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
+    handles, labels = scatter.legend_elements(num=len(unique_clusters))
+    plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
 
     # Place quiver anchors
     anchor_offset = 300
