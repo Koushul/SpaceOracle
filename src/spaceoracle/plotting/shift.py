@@ -5,10 +5,12 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
 
-from .transitions import estimate_transition_probabilities
+from sklearn.cluster import KMeans
+from scipy.spatial import ConvexHull
+
 
 def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=1,
-                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], renormalize=False, n_jobs=1):
+                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], nneighborhoods=20, n_jobs=1):
     
     missing_clusters = set(visual_clusters) - set(adata.obs[annot])
     if missing_clusters:
@@ -29,8 +31,8 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     # Renormalize after selecting cell types of interest
     visual_idxs = [unique_clusters.tolist().index(ct) for ct in visual_clusters]
     P_ct = P_ct[:, visual_idxs]
-    if renormalize:
-        P_ct = P_ct / P_ct.sum(axis=1, keepdims=True)
+    # if renormalize:
+    #     P_ct = P_ct / P_ct.sum(axis=1, keepdims=True)
 
     # Project probabilities into vectors for each cell
     angles = np.linspace(0, 360, len(visual_clusters), endpoint=False)
@@ -40,6 +42,7 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
 
     directions = np.column_stack((x, y)) # (ct x 2)
     vectors = P_ct @ directions          # (cell x 2)
+    adata.obsm['celltype_vectors'] = vectors
 
     x_positions = adata.obsm['spatial'][:, 0]
     y_positions = adata.obsm['spatial'][:, 1]
@@ -48,9 +51,10 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     x_directions = vectors[:, 0]
     y_directions = vectors[:, 1]
 
-    # Plot 
+    # Plot gray scatter
     categories = adata.obs[annot].astype('category')
     codes = categories.cat.codes
+    # scatter = plt.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
 
     # Plot quiver
     max_indices = np.argmax(P_ct, axis=1)
@@ -60,11 +64,11 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
 
     cmap = cm.get_cmap('tab10')
     rgb_values = [cmap(c)[:3] for c in colors]
-    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
-               scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
 
-    # Plot scatter
-    # scatter = plt.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
+    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
+            scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
+
+    # Plot colored scatter
     scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
     handles, labels = scatter.legend_elements(num=len(unique_clusters))
     plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -81,3 +85,43 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     plt.axis('equal')
     plt.tight_layout()
     plt.show()
+
+def group_transitions(adata, betas, nneighborhoods=20, vector_scale=10):
+
+    kmeans = KMeans(n_clusters=nneighborhoods).fit(betas)
+    labels = kmeans.labels_
+
+    x_positions = adata.obsm['spatial'][:, 0]
+    y_positions = adata.obsm['spatial'][:, 1]
+
+    fig, ax = plt.figure()
+    scatter = ax.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
+
+    vectors = adata.obsm['celltype_vectors'] * vector_scale
+    x_directions = vectors[:, 0]
+    y_directions = vectors[:, 1]
+
+    for group in range(nneighborhoods):
+        group_cells = np.where(labels == group)[0]
+        x = x_positions[group_cells]
+        y = y_positions[group_cells]
+
+        points = np.vstack(x, y).T
+        plot_convex_hull(points, ax)
+
+        x_dirs = np.sum(x_directions[group_cells], axis=1)
+        y_dirs = np.sum(y_directions[group_cells], axis=1)
+
+        x_center = np.mean(x)
+        y_center = np.mean(y)
+
+
+        
+
+
+
+
+def plot_convex_hull(points, ax, color='black'):
+    hull = ConvexHull(points)
+    for simplex in hull.simplices:
+        ax.plot(points[simplex, 0], points[simplex, 1], color=color, linewidth=0.5)

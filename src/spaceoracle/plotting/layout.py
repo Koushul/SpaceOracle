@@ -1,11 +1,17 @@
 import plotly.express as px
 import matplotlib.pyplot as plt 
 import seaborn as sns 
+import os
 
 from collections import defaultdict
 import numpy as np 
 import pandas as pd 
 import scanpy as sc 
+
+from sklearn.preprocessing import MinMaxScaler
+from spaceoracle.models.parallel_estimators import received_ligands
+from tqdm import tqdm
+
 
 def view_spatial2D(adata, annot, figsize=None):
     if figsize is not None:
@@ -95,3 +101,41 @@ def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, see
 
         sc.tl.draw_graph(adata, init_pos='paga', random_state=seed)
         sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis")
+
+
+def beta_neighborhoods(so_obj, goi, save_dir=None, show=True):
+    if so_obj.beta_dict is None:
+        so_obj.beta_dict = so_obj._get_spatial_betas_dict() 
+        
+    beta_dict = so_obj.beta_dict
+        
+    gene_mtx = so_obj.adata.layers[so_obj.layer]
+    gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
+
+    gex_df = pd.DataFrame(gene_mtx, index=so_obj.adata.obs_names, columns=so_obj.adata.var_names)
+
+    weighted_ligands = received_ligands(
+        xy=so_obj.adata.obsm['spatial'], 
+        lig_df=gex_df[list(so_obj.ligands)],
+        radius=so_obj.radius
+    )
+
+    bois = []
+    for gene, betaoutput in tqdm(beta_dict.items(), total=len(beta_dict), desc='Ligand interactions'):
+        gene, betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
+        bois.append(betas_df[f'beta_{goi}'].rename(columns={f'beta_{goi}': f'{gene}_beta_{goi}'}))
+    df = pd.concat(bois, axis=1)
+
+    if save_dir:
+        df.to_csv(os.path.join(save_dir, f'beta_{goi}_all.csv'))
+
+    if show:
+        beta_mean = df.mean(axis = 1)
+        plt.scatter(
+            so_obj.adata.obsm['spatial'][:, 0], 
+            so_obj.adata.obsm['spatial'][:, 1], 
+            c=beta_mean, cmap='viridis', s=0.5
+        )
+        plt.colorbar()
+
+    return df
