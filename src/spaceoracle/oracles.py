@@ -618,51 +618,47 @@ class SpaceOracle(Oracle):
 
     def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0, cells=None):
         
+        assert target in self.adata.var_names
+
         # clear downstream analyses
         for key in ['transition_probabilities', 'grid_points', 'vector_field']:
             self.adata.uns.pop(key, None)
 
-        assert target in self.adata.var_names
+        if self.beta_dict is None:
+            print('Computing beta_dict')
+            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
         
         if gene_mtx is None: 
             gene_mtx = self.adata.layers['imputed_count']
 
         if isinstance(gene_mtx, pd.DataFrame):
             gene_mtx = gene_mtx.values
-        
-        # not sure how i should feel this
-        gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
 
         target_index = self.gene2index[target]  
-        simulation_input = gene_mtx.copy()
+        gem_simulated = gene_mtx.copy()
 
-        if cells is None:
-            simulation_input[:, target_index] = gene_expr   # ko target gene
-        else:
-            simulation_input[cells, target_index] = gene_expr
-        
-        delta_input = simulation_input - gene_mtx       # get delta X
-        delta_simulated = delta_input.copy() 
-
-        if self.beta_dict is None:
-            print('Computing beta_dict')
-            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
+        scaler = MinMaxScaler()
 
         for n in range(n_propagation):
+            
+            if cells is None:
+                gem_simulated[:, target_index] = gene_expr   # ko target gene
+            else:
+                gem_simulated[cells, target_index] = gene_expr
 
-            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated)
+            gem_scaled = scaler.fit_transform(gem_simulated)
+            beta_dict = self._get_wbetas_dict(self.beta_dict, gem_scaled)
+            delta_input = gem_simulated - gem_scaled    
 
             _simulated = np.array(
-                [self._perturb_single_cell(delta_simulated, i, beta_dict) 
+                [self._perturb_single_cell(delta_input, i, beta_dict) 
                     for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
+
             delta_simulated = np.array(_simulated)
-            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
-
-            gem_tmp = gene_mtx + delta_simulated
+            gem_tmp = gem_scaled + delta_simulated
             gem_tmp[gem_tmp<0] = 0
-            delta_simulated = gem_tmp - gene_mtx
 
-        gem_simulated = gene_mtx + delta_simulated
+            gem_simulated = scaler.inverse_transform(gem_tmp)
         
         assert gem_simulated.shape == gene_mtx.shape
 
