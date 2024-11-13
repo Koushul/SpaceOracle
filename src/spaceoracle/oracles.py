@@ -20,7 +20,7 @@ import glob
 import pickle
 import io
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import MinMaxScaler
+# from sklearn.preprocessing import MinMaxScaler
 import warnings
 from sklearn.linear_model import Ridge
 
@@ -36,7 +36,7 @@ from .tools.utils import (
     _adata_to_matrix,
     connectivity_to_weights,
     convolve_by_sparse_weights,
-    min_max_df
+    # min_max_df
 )
 
 import warnings
@@ -443,8 +443,6 @@ class SpaceOracle(Oracle):
     
     def _get_wbetas_dict(self, betas_dict, gene_mtx):
         
-        gene_mtx = self.scaler.inverse_transform(gene_mtx)
-
         gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
 
         if len(self.ligands) > 0:
@@ -455,9 +453,6 @@ class SpaceOracle(Oracle):
             )
         else:
             weighted_ligands = []
-
-        weighted_ligands = min_max_df(weighted_ligands)
-        gex_df = min_max_df(gex_df)
 
         self.weighted_ligands = weighted_ligands
 
@@ -485,7 +480,6 @@ class SpaceOracle(Oracle):
 
         betas_df = betas_df[modulators]
         
-        # betas_df = pd.DataFrame(columns=['beta_'+i for i in modulators], index=self.adata.obs.index)
         return gene, betas_df
     
 
@@ -581,11 +575,7 @@ class SpaceOracle(Oracle):
             gene_mtx = gene_mtx.values
 
 
-        self.scaler = MinMaxScaler()
-        self.scaler.fit(gene_mtx)
-
         target_index = self.gene2index[target]  
-        gene_mtx = self.scaler.transform(gene_mtx)
         simulation_input = gene_mtx.copy()
 
         if cells is None:
