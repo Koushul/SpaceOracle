@@ -8,9 +8,11 @@ import matplotlib.cm as cm
 from sklearn.cluster import KMeans
 from scipy.spatial import ConvexHull
 
+from .transitions import estimate_transition_probabilities
+
 
 def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=1,
-                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], nneighborhoods=20, n_jobs=1):
+                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], n_jobs=1):
     
     missing_clusters = set(visual_clusters) - set(adata.obs[annot])
     if missing_clusters:
@@ -54,7 +56,7 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     # Plot gray scatter
     categories = adata.obs[annot].astype('category')
     codes = categories.cat.codes
-    # scatter = plt.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
+    scatter = plt.scatter(x_positions, y_positions, color='grey', alpha=0.3, s=3)
 
     # Plot quiver
     max_indices = np.argmax(P_ct, axis=1)
@@ -69,9 +71,9 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
             scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
 
     # Plot colored scatter
-    scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
-    handles, labels = scatter.legend_elements(num=len(unique_clusters))
-    plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
+    # scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
+    # handles, labels = scatter.legend_elements(num=len(unique_clusters))
+    # plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
 
     # Place quiver anchors
     anchor_offset = 300
@@ -86,39 +88,46 @@ def estimate_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neig
     plt.tight_layout()
     plt.show()
 
-def group_transitions(adata, betas, nneighborhoods=20, vector_scale=10):
 
+def group_transitions(adata, betas, nneighborhoods=20, vector_scale=10):
+    
+    assert 'celltype_vectors' in adata.obsm, f'Please run estimate_transitions first.'
+    
     kmeans = KMeans(n_clusters=nneighborhoods).fit(betas)
     labels = kmeans.labels_
 
     x_positions = adata.obsm['spatial'][:, 0]
     y_positions = adata.obsm['spatial'][:, 1]
 
-    fig, ax = plt.figure()
-    scatter = ax.scatter(x_positions, y_positions, color='grey', alpha=0.8, s=3)
-
     vectors = adata.obsm['celltype_vectors'] * vector_scale
     x_directions = vectors[:, 0]
     y_directions = vectors[:, 1]
+
+    fig, ax = plt.subplots()
+
+    colors = plt.cm.tab20(np.linspace(0, 1, nneighborhoods))
+    cmap = {label: colors[i] for i, label in range(nneighborhoods)}
 
     for group in range(nneighborhoods):
         group_cells = np.where(labels == group)[0]
         x = x_positions[group_cells]
         y = y_positions[group_cells]
 
-        points = np.vstack(x, y).T
+        points = np.vstack((x, y)).T
         plot_convex_hull(points, ax)
 
-        x_dirs = np.sum(x_directions[group_cells], axis=1)
-        y_dirs = np.sum(y_directions[group_cells], axis=1)
+        x_dir = np.sum(x_directions[group_cells])
+        y_dir = np.sum(y_directions[group_cells])
 
         x_center = np.mean(x)
         y_center = np.mean(y)
 
+        print(group, cmap)
 
-        
+        ax.scatter(x_positions, y_positions, color=cmap[group], alpha=0.8, s=3)
+        ax.quiver(x_center, y_center, x_dir, y_dir, angles='xy', scale_units='xy', scale=1)
 
-
+    plt.show()
 
 
 def plot_convex_hull(points, ax, color='black'):

@@ -7,10 +7,12 @@ from collections import defaultdict
 import numpy as np 
 import pandas as pd 
 import scanpy as sc 
+from tqdm import tqdm
 
 from sklearn.preprocessing import MinMaxScaler
 from spaceoracle.models.parallel_estimators import received_ligands
-from tqdm import tqdm
+from sklearn.cluster import KMeans, DBSCAN
+
 
 
 def view_spatial2D(adata, annot, figsize=None):
@@ -103,7 +105,7 @@ def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, see
         sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis")
 
 
-def beta_neighborhoods(so_obj, goi, save_dir=None, show=True):
+def get_modulator_betas(so_obj, goi, save_dir=None, show=True):
     if so_obj.beta_dict is None:
         so_obj.beta_dict = so_obj._get_spatial_betas_dict() 
         
@@ -123,7 +125,8 @@ def beta_neighborhoods(so_obj, goi, save_dir=None, show=True):
     bois = []
     for gene, betaoutput in tqdm(beta_dict.items(), total=len(beta_dict), desc='Ligand interactions'):
         gene, betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
-        bois.append(betas_df[f'beta_{goi}'].rename(columns={f'beta_{goi}': f'{gene}_beta_{goi}'}))
+        if f'beta_{goi}' in betas_df.columns:
+            bois.append(betas_df[f'beta_{goi}'].rename(f'{gene}_beta_{goi}'))
     df = pd.concat(bois, axis=1)
 
     if save_dir:
@@ -139,3 +142,56 @@ def beta_neighborhoods(so_obj, goi, save_dir=None, show=True):
         plt.colorbar()
 
     return df
+
+
+def show_beta_neighborhoods(adata, betas, nneighborhoods=20, seed=1334, split_spatially=False):
+
+    kmeans = KMeans(n_clusters=nneighborhoods, random_state=seed).fit(betas)
+    labels = kmeans.labels_
+
+    x_positions = adata.obsm['spatial'][:, 0]
+    y_positions = adata.obsm['spatial'][:, 1]
+
+    if split_spatially:
+        new_labels = np.empty(len(x_positions), dtype=str)
+
+        for cluster_id in np.unique(labels):
+
+            cluster_points = np.vstack((
+                x_positions[labels == cluster_id],
+                y_positions[labels == cluster_id]
+            )).T
+
+            dbscan = DBSCAN(eps=10, min_samples=100)
+            subcluster_labels = dbscan.fit_predict(cluster_points)
+
+            subcluster_labels = [
+                f"{cluster_id}_{label}" if label != -1 else f"{cluster_id}_noise"
+                for label in subcluster_labels
+            ]
+
+            idxs = np.where(labels == cluster_id)
+            new_labels[idxs] = subcluster_labels
+
+        labels = np.array(new_labels)
+        nneighborhoods = len(np.unique(labels)) 
+
+
+    colors = plt.cm.tab20(np.linspace(0, 1, nneighborhoods))
+    cmap = {label: colors[i] for i, label in enumerate(np.unique(labels))}
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    for label in np.unique(labels):
+        group_cells = np.where(labels == label)[0]
+        x = x_positions[group_cells]
+        y = y_positions[group_cells]
+
+        ax.scatter(x, y, color=cmap[label], alpha=0.8, s=3, label=f"Cluster {label}")
+
+    ax.set_title("Neighborhoods from Betas")
+    ax.axis('off')
+    plt.tight_layout()
+    plt.show()
+
+    return labels
