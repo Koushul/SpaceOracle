@@ -35,7 +35,8 @@ from .tools.utils import (
     knn_distance_matrix,
     _adata_to_matrix,
     connectivity_to_weights,
-    convolve_by_sparse_weights
+    convolve_by_sparse_weights,
+    min_max_df
 )
 
 import warnings
@@ -441,6 +442,8 @@ class SpaceOracle(Oracle):
         )
     
     def _get_wbetas_dict(self, betas_dict, gene_mtx):
+        
+        gene_mtx = self.scaler.inverse_transform(gene_mtx)
 
         gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
 
@@ -453,9 +456,12 @@ class SpaceOracle(Oracle):
         else:
             weighted_ligands = []
 
+        weighted_ligands = min_max_df(weighted_ligands)
+        gex_df = min_max_df(gex_df)
+
         self.weighted_ligands = weighted_ligands
 
-        for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions'):
+        for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions', disable=len(betas_dict) == 1):
             betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
             betas_dict[gene].wbetas = betas_df
 
@@ -503,62 +509,6 @@ class SpaceOracle(Oracle):
         return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
 
 
-    def _get_gene_wbetas2(self, received_ligands, betas_df, gex_df, ligand_receptor_pairs, tfl_pairs):
-        # Pre-compute common values and create empty DataFrames with proper dimensions
-        obs_index = self.adata.obs.index
-        result_dfs = []
-
-        if ligand_receptor_pairs:
-            # Vectorized computation for receptor-ligand pairs
-            for lig, rec in ligand_receptor_pairs:
-                beta_key = f'beta_{lig}${rec}'
-                # dy/dR: beta * wL
-                result_dfs.append(
-                    pd.DataFrame(
-                        (betas_df[beta_key] * received_ligands[lig]).values,
-                        columns=[f'beta_{rec}'],
-                        index=obs_index
-                    )
-                )
-                # dy/dwL: beta * R
-                result_dfs.append(
-                    pd.DataFrame(
-                        (betas_df[beta_key] * gex_df[rec]).values,
-                        columns=[f'beta_{lig}'],
-                        index=obs_index
-                    )
-                )
-        
-        if tfl_pairs:
-            # Vectorized computation for TF-ligand pairs
-            for lig, reg in tfl_pairs:
-                beta_key = f'beta_{lig}#{reg}'
-                # dy/dTF: beta * wL
-                result_dfs.append(
-                    pd.DataFrame(
-                        (betas_df[beta_key] * received_ligands[lig]).values,
-                        columns=[f'beta_{reg}'],
-                        index=obs_index
-                    )
-                )
-                # dy/dwL: beta * TF
-                result_dfs.append(
-                    pd.DataFrame(
-                        (betas_df[beta_key] * gex_df[reg]).values,
-                        columns=[f'beta_{lig}'],
-                        index=obs_index
-                    )
-                )
-        
-        # Combine all results
-        if result_dfs:
-            combined_df = pd.concat([betas_df] + result_dfs, axis=1)
-            return combined_df.groupby(lambda x: x, axis=1).sum()
-        
-        return betas_df
-
-    
-        
     def _get_gene_wbetas(self, received_ligands, betas_df, gex_df, ligands, receptors, tfl_regulators, tfl_ligands):
 
         b_ligand = lambda x, y: betas_df[f'beta_{x}${y}']*received_ligands[x]
@@ -597,9 +547,7 @@ class SpaceOracle(Oracle):
     def _get_spatial_betas_dict(self):
         beta_dict = {}
         for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
-            # beta_dict[gene] = self._get_betas(self.adata, gene)
             beta_dict[gene] = self._get_betas(gene)
-
         return beta_dict
 
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
@@ -620,15 +568,11 @@ class SpaceOracle(Oracle):
 
     def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0, cells=None):
         
-        assert target in self.adata.var_names
-
         # clear downstream analyses
         for key in ['transition_probabilities', 'grid_points', 'vector_field']:
             self.adata.uns.pop(key, None)
 
-        if self.beta_dict is None:
-            print('Computing beta_dict')
-            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
+        assert target in self.adata.var_names
         
         if gene_mtx is None: 
             gene_mtx = self.adata.layers['imputed_count']
@@ -636,31 +580,43 @@ class SpaceOracle(Oracle):
         if isinstance(gene_mtx, pd.DataFrame):
             gene_mtx = gene_mtx.values
 
-        target_index = self.gene2index[target]  
-        gem_simulated = gene_mtx.copy()
 
-        scaler = MinMaxScaler()
+        self.scaler = MinMaxScaler()
+        self.scaler.fit(gene_mtx)
+
+        target_index = self.gene2index[target]  
+        gene_mtx = self.scaler.transform(gene_mtx)
+        simulation_input = gene_mtx.copy()
+
+        if cells is None:
+            simulation_input[:, target_index] = gene_expr   # ko target gene
+        else:
+            simulation_input[cells, target_index] = gene_expr
+        
+        delta_input = simulation_input - gene_mtx       # get delta X
+        delta_simulated = delta_input.copy() 
+
+        if self.beta_dict is None:
+            print('Computing beta_dict')
+            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
 
         for n in range(n_propagation):
-            
-            if cells is None:
-                gem_simulated[:, target_index] = gene_expr   # ko target gene
-            else:
-                gem_simulated[cells, target_index] = gene_expr
 
-            gem_scaled = scaler.fit_transform(gem_simulated)
-            beta_dict = self._get_wbetas_dict(self.beta_dict, gem_scaled)
-            delta_input = gem_simulated - gem_scaled    
+            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated)
 
             _simulated = np.array(
-                [self._perturb_single_cell(delta_input, i, beta_dict) 
-                    for i in tqdm(range(self.adata.n_obs), desc=f'Running simulation {n+1}/{n_propagation}')])
-
+                [self._perturb_single_cell(delta_simulated, i, beta_dict) 
+                    for i in tqdm(
+                        range(self.adata.n_obs), 
+                        desc=f'Running simulation {n+1}/{n_propagation}')])
             delta_simulated = np.array(_simulated)
-            gem_tmp = gem_scaled + delta_simulated
-            gem_tmp[gem_tmp<0] = 0
+            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
 
-            gem_simulated = scaler.inverse_transform(gem_tmp)
+            gem_tmp = gene_mtx + delta_simulated
+            gem_tmp[gem_tmp<0] = 0
+            delta_simulated = gem_tmp - gene_mtx
+
+        gem_simulated = gene_mtx + delta_simulated
         
         assert gem_simulated.shape == gene_mtx.shape
 

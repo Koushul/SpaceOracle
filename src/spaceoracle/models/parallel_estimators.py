@@ -268,9 +268,13 @@ class SpatialCellularProgramsEstimator:
                 radius=self.radius,
             )
 
+
+            self.adata.uns['received_ligands'] = min_max_df(self.adata.uns['received_ligands'])
+            self.adata.uns['received_ligands_tfl'] = min_max_df(self.adata.uns['received_ligands_tfl'])
+
             self.adata.uns['ligand_receptor'] = self.ligands_receptors_interactions(
                 self.adata.uns['received_ligands'][self.ligands], 
-                self.adata.to_df(layer=self.layer)[self.receptors]
+                min_max_df(self.adata.to_df(layer=self.layer))[self.receptors]
             )
 
         else:
@@ -281,7 +285,7 @@ class SpatialCellularProgramsEstimator:
         if len(self.tfl_pairs) > 0:
             self.adata.uns['ligand_regulator'] = self.ligand_regulators_interactions(
                 self.adata.uns['received_ligands_tfl'][self.tfl_ligands], 
-                self.adata.to_df(layer=self.layer)[self.tfl_regulators]
+                min_max_df(self.adata.to_df(layer=self.layer))[self.tfl_regulators]
             )
         else:
             self.adata.uns['ligand_regulator'] = pd.DataFrame(index=self.adata.obs.index)
@@ -304,12 +308,12 @@ class SpatialCellularProgramsEstimator:
         #     .join(self.adata.uns['ligand_receptor']) \
         #     .join(self.adata.uns['ligand_regulator'])
 
-        self.train_df = self.adata.to_df(layer=self.layer)[[self.target_gene]] \
+        self.train_df = min_max_df(self.adata.to_df(layer=self.layer)[[self.target_gene]]) \
             .join(self.adata.uns['ligand_receptor']) \
             .join(self.adata.uns['ligand_regulator'])
         
 
-        self.train_df = min_max_df(self.train_df)
+        # self.train_df = min_max_df(self.train_df)
 
         self.spatial_features = create_spatial_features(
             self.adata.obsm['spatial'][:, 0], 
