@@ -170,8 +170,8 @@ def prune_neighbors(dsi, dist, maxl):
         row = adjacency[i]
         non_zero_indices = np.nonzero(row)[0]
         if len(non_zero_indices) > maxl:
-            sorted_indices = non_zero_indices[np.argsort(row[non_zero_indices])[::-1]]
-            to_remove = sorted_indices[maxl:]  
+            sorted_indices = non_zero_indices[np.argsort(row[non_zero_indices])] # indices sorted by weight
+            to_remove = sorted_indices[maxl:]  # set all connections with high weight to 0
             adjacency[i, to_remove] = 0
 
     adjacency = np.minimum(adjacency, adjacency.T)
