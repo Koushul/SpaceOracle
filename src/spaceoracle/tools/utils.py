@@ -11,6 +11,8 @@ import pickle
 from sklearn.neighbors import kneighbors_graph, NearestNeighbors
 from scipy import sparse
 import io
+import networkx as nx
+
 
 class CPU_Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
@@ -149,3 +151,26 @@ def min_max_df(df):
         columns=df.columns,
         index=df.index
     )
+
+
+def prune_neighbors(dsi, dist, maxl):
+    num_samples = dsi.shape[0]
+
+    rows = np.repeat(np.arange(num_samples), dsi.shape[1])
+    cols = dsi.flatten()
+    weights = dist.flatten()
+
+    G = nx.Graph()
+    G.add_weighted_edges_from(zip(rows, cols, weights))
+
+    for node in G.nodes:
+        neighbors = list(G[node].items())
+        if len(neighbors) > maxl:
+            to_remove = sorted(neighbors, key=lambda x: x[1]['weight'], reverse=True)[maxl:]
+            G.remove_edges_from([(node, neighbor[0]) for neighbor in to_remove])
+
+    bknn = nx.to_scipy_sparse_matrix(G, nodelist=range(num_samples), weight='weight', format='csr')
+
+    return bknn
+
+

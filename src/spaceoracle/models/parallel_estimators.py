@@ -160,9 +160,9 @@ class SpatialCellularProgramsEstimator:
         self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(self.adata.var_names) & (self.lr.receptor.isin(self.adata.var_names))]
 
-        receptors = self.lr['receptor']
-        recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
-        self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
+        # receptors = self.lr['receptor']
+        # recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
+        # self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
 
         self.lr = self.lr[~((self.lr.receptor == self.target_gene) | (self.lr.ligand == self.target_gene))]
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
@@ -183,8 +183,6 @@ class SpatialCellularProgramsEstimator:
         self.nichenet_lt = nichenet_lt.loc[
             np.intersect1d(nichenet_lt.index, self.regulators)][
                 np.intersect1d(nichenet_lt.columns, self.ligands)]
-        
-
         
         self.tfl_pairs = []
         self.tfl_regulators = []
@@ -303,7 +301,7 @@ class SpatialCellularProgramsEstimator:
             .join(self.adata.uns['ligand_regulator'])
         
 
-        self.train_df = min_max_df(self.train_df)
+        # self.train_df = min_max_df(self.train_df)
 
         self.spatial_features = create_spatial_features(
             self.adata.obsm['spatial'][:, 0], 
@@ -383,10 +381,12 @@ class SpatialCellularProgramsEstimator:
             print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
             print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
 
-        
         for cluster in np.unique(cluster_labels):
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
+
+            scalerx = MinMaxScaler()
+            X_cell = scalerx.fit_transform(X_cell)
 
             if use_ARD: 
 
@@ -407,7 +407,9 @@ class SpatialCellularProgramsEstimator:
                 r2_ard = r2_score(y_cell, y_pred)
 
                 intercept = (m1.intercept_ + m2.intercept_ + m3.intercept_) / 3
-                _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
+                coefs = scalerx.inverse_transform(np.hstack[m1.coef_, m2.coef_, m3.coef_])
+                _betas = np.hstack([intercept, coefs])
+                # _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
 
                 # m = ARDRegression(threshold_lambda=threshold_lambda)
                 # m.fit(X_cell, y_cell)
@@ -450,7 +452,10 @@ class SpatialCellularProgramsEstimator:
                 lr_coefs = threshold_coefficients(coefs, group=2, discard=discard)
                 tfl_coefs = threshold_coefficients(coefs, group=3, discard=discard)
 
-                _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs, tfl_coefs])
+                import pdb; pdb.set_trace()
+                coefs = scalerx.inverse_transform(np.hstack([tf_coefs, lr_coefs, tfl_coefs]))
+                _betas = np.hstack([gl.intercept_, coefs])
+                # _betas = np.hstack([gl.intercept_, tf_coefs, lr_coefs, tfl_coefs])
 
                 r2_ard = r2_score(y_cell, y_pred)
             

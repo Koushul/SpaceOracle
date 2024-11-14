@@ -19,10 +19,11 @@ import re
 import glob
 import pickle
 import io
+import warnings
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler
-import warnings
 from sklearn.linear_model import Ridge
+from sklearn.neighbors import NearestNeighbors
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
@@ -35,7 +36,8 @@ from .tools.utils import (
     knn_distance_matrix,
     _adata_to_matrix,
     connectivity_to_weights,
-    convolve_by_sparse_weights
+    convolve_by_sparse_weights,
+    prune_neighbors
 )
 
 import warnings
@@ -60,7 +62,7 @@ class Oracle(ABC):
         
         if 'imputed_count' not in self.adata.layers:
             self.pcs = self.perform_PCA(self.adata)
-            self.knn_imputation(self.adata, self.pcs)
+            self.knn_imputation(self.adata, self.pcs, balanced=True)
 
         clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
@@ -75,8 +77,7 @@ class Oracle(ABC):
         else:
             pcs = pca.fit_transform(X.T)
         
-        cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-        n_comps = np.where(cumulative_variance >= 0.98)[0][0] + 1
+        n_comps = np.where(np.diff(np.diff(np.cumsum(pca.explained_variance_ratio_))>0.002))[0][0]
 
         return pcs[:, :n_comps]
 
@@ -101,8 +102,22 @@ class Oracle(ABC):
         n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
 
-        knn = knn_distance_matrix(space, metric=metric, k=k,
-                                        mode="distance", n_jobs=n_jobs)
+        if balanced:
+            nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
+            nn.fit(space)
+
+            dist, dsi = nn.kneighbors(space, return_distance=True)
+            knn = prune_neighbors(dsi, dist, b_maxl)
+
+            # bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
+            #                    metric=metric, mode="distance", n_jobs=n_jobs)
+            # bknn.fit(space)
+            # knn = bknn.kneighbors_graph(mode="distance")
+        
+        else:
+            knn = knn_distance_matrix(space, metric=metric, k=k,
+                                            mode="distance", n_jobs=n_jobs)
+        
         connectivity = (knn > 0).astype(float)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -498,6 +513,9 @@ class SpaceOracle(Oracle):
             columns=[f'beta_{r}' for r in tfl_regulators]+[f'beta_{l}' for l in tfl_ligands]
         )
 
+        _df_lr = _df_lr * scale_factor
+        _df_tfl = _df_tfl * scale_factor
+
         return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
 
 
@@ -646,8 +664,8 @@ class SpaceOracle(Oracle):
             else:
                 gem_simulated[cells, target_index] = gene_expr
 
-            gem_scaled = scaler.fit_transform(gem_simulated)
             beta_dict = self._get_wbetas_dict(self.beta_dict, gem_scaled)
+            gem_scaled = scaler.fit_transform(gem_simulated)
             delta_input = gem_simulated - gem_scaled    
 
             _simulated = np.array(
