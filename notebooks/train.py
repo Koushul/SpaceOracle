@@ -7,7 +7,7 @@ import spaceoracle
 
 
 adata_train = sc.read_h5ad(
-    '/ihome/ylee/kor11/space/SpaceOracle/notebooks/cache/adata_train.h5ad')
+    '/ix/djishnu/shared/djishnu_kor11/training_data/day3_lymph_rep_1.h5ad')
 
 
 so = spaceoracle.SpaceOracle(
@@ -17,9 +17,9 @@ so = spaceoracle.SpaceOracle(
     learning_rate=5e-4, 
     spatial_dim=64,
     batch_size=512,
-    threshold_lambda=1e-4,
+    threshold_lambda=1e-8,
     test_mode=False,
-    save_dir='/ix/djishnu/shared/djishnu_kor11/models'
+    save_dir='/ix/djishnu/shared/djishnu_kor11/models_v2'
 )
 
 so.run()
