@@ -8,8 +8,10 @@ import functools
 import inspect
 import warnings
 import pickle
-from sklearn.neighbors import kneighbors_graph, NearestNeighbors
+from sklearn.neighbors import NearestNeighbors
+from scipy.sparse import csr_matrix
 from scipy import sparse
+from tqdm import tqdm
 import io
 import networkx as nx
 
@@ -160,17 +162,20 @@ def prune_neighbors(dsi, dist, maxl):
     cols = dsi.flatten()
     weights = dist.flatten()
 
-    G = nx.Graph()
-    G.add_weighted_edges_from(zip(rows, cols, weights))
+    adjacency = np.zeros((num_samples, num_samples), dtype=weights.dtype)
+    adjacency[rows, cols] = weights
+    np.fill_diagonal(adjacency, 0) 
 
-    for node in G.nodes:
-        neighbors = list(G[node].items())
-        if len(neighbors) > maxl:
-            to_remove = sorted(neighbors, key=lambda x: x[1]['weight'], reverse=True)[maxl:]
-            G.remove_edges_from([(node, neighbor[0]) for neighbor in to_remove])
+    for i in range(num_samples):
+        row = adjacency[i]
+        non_zero_indices = np.nonzero(row)[0]
+        if len(non_zero_indices) > maxl:
+            sorted_indices = non_zero_indices[np.argsort(row[non_zero_indices])[::-1]]
+            to_remove = sorted_indices[maxl:]  
+            adjacency[i, to_remove] = 0
 
-    bknn = nx.to_scipy_sparse_matrix(G, nodelist=range(num_samples), weight='weight', format='csr')
-
+    adjacency = np.minimum(adjacency, adjacency.T)
+    bknn = csr_matrix(adjacency)
     return bknn
 
 
