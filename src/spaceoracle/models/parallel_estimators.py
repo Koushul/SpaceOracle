@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
+from torch.utils.data import DataLoader, Dataset
 from sklearn.linear_model import ARDRegression
 from group_lasso import GroupLasso
 from spaceoracle.models.spatial_map import xyc2spatial_fast
@@ -16,6 +16,7 @@ from spaceoracle.tools.network import DayThreeRegulatoryNetwork, expand_paired_i
 from .pixel_attention import CellularNicheNetwork
 from ..tools.utils import gaussian_kernel_2d, min_max_df, set_seed
 import commot as ct
+from scipy.spatial.distance import cdist
 import numba
 set_seed(42)
 
@@ -31,14 +32,14 @@ def calculate_weighted_ligands(gauss_weights, lig_df_values, u_ligands):
     
     return weighted_ligands
 
-def received_ligands(xy, lig_df, radius=200):
+def received_ligands(xy, lig_df, radius=200, scale_factor=1e5):
+    """Returns a min_max-normalized df of wL"""
     ligands = lig_df.columns
     gauss_weights = [
-        gaussian_kernel_2d(
+        scale_factor * gaussian_kernel_2d(
             xy[i], 
             xy, 
-            radius=radius) for i in range(len(lig_df)
-        )
+            radius=radius) for i in range(len(lig_df))
     ]
 
     u_ligands = list(np.unique(ligands))
@@ -53,7 +54,6 @@ def received_ligands(xy, lig_df, radius=200):
     ).T
 
 
-from scipy.spatial.distance import cdist
 
 def create_spatial_features(x, y, celltypes, obs_index,radius=200):
     coords = np.column_stack((x, y))
@@ -69,7 +69,8 @@ def create_spatial_features(x, y, celltypes, obs_index,radius=200):
         raise ValueError(f"Unexpected result shape: {result.shape}. Expected: {(len(x), len(unique_celltypes))}")
     
     columns = [f'{ct}_within' for ct in unique_celltypes]
-    df = pd.DataFrame(StandardScaler().fit_transform(result), columns=columns, index=obs_index)
+    # df = pd.DataFrame(StandardScaler().fit_transform(result), columns=columns, index=obs_index)
+    df = pd.DataFrame(result, columns=columns, index=obs_index)
     
     return df
 
@@ -114,6 +115,8 @@ class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
             cluster_annot='rctd_cluster', layer='imputed_count', 
             radius=200, tf_ligand_cutoff=0.01):
+        
+
         assert isinstance(adata, AnnData), 'adata must be an AnnData object'
         assert target_gene in adata.var_names, f'{target_gene} must be in adata.var_names'
         assert layer in adata.layers, f'{layer} must be in adata.layers'
@@ -158,9 +161,9 @@ class SpatialCellularProgramsEstimator:
         self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(self.adata.var_names) & (self.lr.receptor.isin(self.adata.var_names))]
 
-        receptors = self.lr['receptor']
-        recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
-        self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
+        # receptors = self.lr['receptor']
+        # recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
+        # self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
 
         self.lr = self.lr[~((self.lr.receptor == self.target_gene) | (self.lr.ligand == self.target_gene))]
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
@@ -172,23 +175,16 @@ class SpatialCellularProgramsEstimator:
         data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
         nichenet_lt = pd.read_parquet(data_path)
 
-        # print(nichenet_lt)
-
-        # nichenet_lt = nichenet_lt.loc[
-        #     np.intersect1d(nichenet_lt.index, self.regulators)][
-        #         np.intersect1d(nichenet_lt.columns, self.adata.var_names)]
-
         self.nichenet_lt = nichenet_lt.loc[
             np.intersect1d(nichenet_lt.index, self.regulators)][
                 np.intersect1d(nichenet_lt.columns, self.ligands)]
-        
-
         
         self.tfl_pairs = []
         self.tfl_regulators = []
         self.tfl_ligands = []
 
-        self.ligand_regulators = {lig: set(self.grn.get_regulators(self.adata, lig)) for lig in self.nichenet_lt.columns}
+        self.ligand_regulators = {lig: set(
+            self.grn.get_regulators(self.adata, lig)) for lig in self.nichenet_lt.columns}
 
         for tf_ in self.nichenet_lt.index:
             row = self.nichenet_lt.loc[tf_]
@@ -200,14 +196,6 @@ class SpatialCellularProgramsEstimator:
                     self.tfl_ligands.append(lig_)
                     self.tfl_regulators.append(tf_)
                     self.tfl_pairs.append(f"{lig_}#{tf_}")
-
-        # for tf_, row in self.nichenet_lt.iterrows():
-        #     top_5 = row.nlargest(5)
-        #     for lig_, value in top_5.items():
-        #         if value > self.tf_ligand_cutoff:
-        #             self.tfl_ligands.append(lig_)
-        #             self.tfl_regulators.append(tf_)
-        #             self.tfl_pairs.append(f"{lig_}#{tf_}")
 
 
         assert len(self.ligands) == len(self.receptors)
@@ -251,6 +239,7 @@ class SpatialCellularProgramsEstimator:
 
 
     def init_data(self):
+
         if len(self.lr['pairs']) > 0:
             self.adata.uns['received_ligands'] = received_ligands(
                 self.adata.obsm['spatial'], 
@@ -267,6 +256,7 @@ class SpatialCellularProgramsEstimator:
             self.adata.uns['ligand_receptor'] = self.ligands_receptors_interactions(
                 self.adata.uns['received_ligands'][self.ligands], 
                 self.adata.to_df(layer=self.layer)[self.receptors]
+
             )
 
         else:
@@ -281,11 +271,12 @@ class SpatialCellularProgramsEstimator:
             )
         else:
             self.adata.uns['ligand_regulator'] = pd.DataFrame(index=self.adata.obs.index)
-        
+
 
         self.xy = np.array(self.adata.obsm['spatial'])
         cluster_labels = np.array(self.adata.obs[self.cluster_annot])
 
+        self.xy_df = pd.DataFrame(self.xy, columns=['x', 'y'], index=self.adata.obs.index)
 
         self.spatial_maps = xyc2spatial_fast(
                 xyc = np.column_stack([self.xy, cluster_labels]),
@@ -295,13 +286,14 @@ class SpatialCellularProgramsEstimator:
             
         self.adata.obsm['spatial_maps'] = self.spatial_maps
 
+
         self.train_df = self.adata.to_df(layer=self.layer)[
-            self.regulators+[self.target_gene]] \
+            [self.target_gene]+self.regulators] \
             .join(self.adata.uns['ligand_receptor']) \
             .join(self.adata.uns['ligand_regulator'])
         
 
-        self.train_df = min_max_df(self.train_df)
+        # self.train_df = min_max_df(self.train_df)
 
         self.spatial_features = create_spatial_features(
             self.adata.obsm['spatial'][:, 0], 
@@ -310,6 +302,15 @@ class SpatialCellularProgramsEstimator:
             self.adata.obs.index,
             radius=self.radius
         )
+
+        self.adata.obsm['spatial_features'] = self.spatial_features.copy()
+
+        self.spatial_features = pd.DataFrame(
+            MinMaxScaler().fit_transform(self.spatial_features.values), 
+            columns=self.spatial_features.columns, 
+            index=self.spatial_features.index
+        )
+
 
         X = self.train_df.drop(columns=[self.target_gene]).values
         y = self.train_df[self.target_gene].values
@@ -328,7 +329,8 @@ class SpatialCellularProgramsEstimator:
             mask = self.cluster_labels == cluster_target
             indices = self.cell_indices[mask]
             index_tracker.extend(indices)
-            cluster_sp_maps = torch.from_numpy(self.sp_maps[mask][:, cluster_target:cluster_target+1, :, :]).float()
+            cluster_sp_maps = torch.from_numpy(
+                self.sp_maps[mask][:, cluster_target:cluster_target+1, :, :]).float()
             spf = torch.from_numpy(self.spatial_features.values[mask]).float()
             b = self.models[cluster_target].get_betas(
                 cluster_sp_maps.to(self.device),
@@ -346,7 +348,11 @@ class SpatialCellularProgramsEstimator:
     def betadata(self):
         betas_df = self.get_betas()
 
-        xy = pd.DataFrame(self.adata.obsm['spatial'], index=self.adata.obs.index, columns=['x', 'y'])
+        xy = pd.DataFrame(
+            self.adata.obsm['spatial'], 
+            index=self.adata.obs.index, 
+            columns=['x', 'y']
+        )
 
         _data = betas_df \
             .join(self.adata.obs) \
@@ -375,12 +381,12 @@ class SpatialCellularProgramsEstimator:
                 auto_refresh=True
             )
 
-        print(f'Fitting {self.target_gene} with {len(self.modulators)} modulators')
-        print(f'\t{len(self.regulators)} Transcription Factors')
-        print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
-        print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
+        if num_epochs:
+            print(f'Fitting {self.target_gene} with {len(self.modulators)} modulators')
+            print(f'\t{len(self.regulators)} Transcription Factors')
+            print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
+            print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
 
-        
         for cluster in np.unique(cluster_labels):
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
@@ -404,7 +410,9 @@ class SpatialCellularProgramsEstimator:
                 r2_ard = r2_score(y_cell, y_pred)
 
                 intercept = (m1.intercept_ + m2.intercept_ + m3.intercept_) / 3
-                _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
+                coefs = np.hstack[m1.coef_, m2.coef_, m3.coef_]
+                _betas = np.hstack([intercept, coefs])
+                # _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
 
                 # m = ARDRegression(threshold_lambda=threshold_lambda)
                 # m.fit(X_cell, y_cell)
@@ -417,6 +425,7 @@ class SpatialCellularProgramsEstimator:
             else:
 
                 groups = [1]*len(self.regulators) + [2]*len(self.ligands) + [3]*len(self.tfl_pairs)
+
                 groups = np.array(groups)
 
                 gl = GroupLasso(
@@ -466,19 +475,6 @@ class SpatialCellularProgramsEstimator:
 
             assert _betas.shape[0] == len(self.modulators)+1
 
-            # _m = self.models.get(0, None)
-
-            # if _m is None:
-            #     model = CellularNicheNetwork(
-            #         n_modulators = len(self.modulators), 
-            #         anchors=_betas,
-            #         spatial_dim=self.spatial_dim,
-            #         n_clusters=self.n_clusters
-            #     ).to(self.device)
-
-            # else:
-            #     model = copy.deepcopy(_m).to(self.device)
-
             model = CellularNicheNetwork(
                     n_modulators = len(self.modulators), 
                     anchors=_betas,
@@ -515,6 +511,6 @@ class SpatialCellularProgramsEstimator:
                     pbar.desc = f'{self.target_gene} | {cluster+1}/{self.n_clusters}'
                     pbar.update(len(targets))
 
-
-            print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
+            if num_epochs:
+                print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
             self.models[cluster] = model

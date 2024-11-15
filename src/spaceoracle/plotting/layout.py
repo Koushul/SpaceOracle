@@ -1,10 +1,19 @@
 import plotly.express as px
 import matplotlib.pyplot as plt 
 import seaborn as sns 
+import os
 
 from collections import defaultdict
 import numpy as np 
 import pandas as pd 
+import scanpy as sc 
+from tqdm import tqdm
+
+from sklearn.preprocessing import MinMaxScaler
+from spaceoracle.models.parallel_estimators import received_ligands
+from sklearn.cluster import KMeans, DBSCAN
+
+
 
 def view_spatial2D(adata, annot, figsize=None):
     if figsize is not None:
@@ -63,70 +72,126 @@ def view_spatial3D(adata, annot, flat=False, show=True):
     fig.show()
 
 
-def view_betas(so, regulator, target_gene, celltypes=None):
-    markers = ['o', 'X', '<', '^', 'v', 'D', '>']
-    cmaps = dict(zip(range(7), ['rainbow', 'cool', 'RdYlGn_r', 'spring_r', '', 'PuRd', 'Reds']))
-    # cmap = 'rainbow'
+def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, seed=123):
+
+    assert embedding in ['FR', 'PCA', 'UMAP', 'spatial'], f'{embedding} is not a valid embedding choice'
     
-    betadata = so.load_betadata(target_gene, so.save_dir)
-    beta_columns = [i for i in betadata.columns if i[:5] == 'beta_' and '$' not in i]
-    all_modulators = [i.replace('beta_', '') for i in beta_columns]
+    sc.tl.pca(adata, svd_solver='arpack')
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
 
-    df = betadata
+    if embedding == 'PCA':
+        sc.pl.pca(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis')
+    
+    elif embedding == 'UMAP':
+        sc.tl.umap(adata)
+        sc.pl.umap(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis')
 
-    plot_for = regulator
-    cell_map = dict(zip(df[so.annot], df[so.annot]))
+    elif embedding == 'spatial':
+        x = adata.obsm['spatial'][:, 0]
+        y = adata.obsm['spatial'][:, 1] * -1
 
-    fig, (ax, cax) = plt.subplots(1, 2, dpi=80, figsize=(11, 9), gridspec_kw={'width_ratios': [4, 0.5]})
+        adata = adata.copy()
+        adata.obsm['spatial'] = np.vstack([x, y]).T
+        sc.pl.spatial(adata, color=[goi, annot], layer='imputed_count', use_raw=False, cmap='viridis', spot_size=50)
 
-    if celltypes is None:
-        celltypes = np.unique(df[so.annot])
+    elif embedding == 'FR': 
 
-    for i in celltypes:
-        betas_df = df[['beta0']+['beta_'+i for i in all_modulators]][df[so.annot]==i]
+        sc.tl.diffmap(adata)
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X_diffmap')
+        sc.tl.paga(adata, groups=annot)
+        sc.pl.paga(adata)
 
-        sns.scatterplot(
-            data=betas_df.join(df[['x', 'y', so.annot]]),
-            x='x', 
-            y='y',
-            hue=plot_for,
-            palette=cmaps[i],
-            s=25,
-            alpha=1,
-            linewidth=0.5,
-            edgecolor='black',
-            legend=False,
-            style=so.annot,
-            markers=markers,
-            ax=ax
+        sc.tl.draw_graph(adata, init_pos='paga', random_state=seed)
+        sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis")
+
+
+def get_modulator_betas(so_obj, goi, save_dir=None, show=True):
+    if so_obj.beta_dict is None:
+        so_obj.beta_dict = so_obj._get_spatial_betas_dict() 
+        
+    beta_dict = so_obj.beta_dict
+        
+    gene_mtx = so_obj.adata.layers[so_obj.layer]
+    gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
+
+    gex_df = pd.DataFrame(gene_mtx, index=so_obj.adata.obs_names, columns=so_obj.adata.var_names)
+
+    weighted_ligands = received_ligands(
+        xy=so_obj.adata.obsm['spatial'], 
+        lig_df=gex_df[list(so_obj.ligands)],
+        radius=so_obj.radius
+    )
+
+    bois = []
+    for gene, betaoutput in tqdm(beta_dict.items(), total=len(beta_dict), desc='Ligand interactions'):
+        gene, betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
+        if f'beta_{goi}' in betas_df.columns:
+            bois.append(betas_df[f'beta_{goi}'].rename(f'{gene}_beta_{goi}'))
+    df = pd.concat(bois, axis=1)
+
+    if save_dir:
+        df.to_csv(os.path.join(save_dir, f'beta_{goi}_all.csv'))
+
+    if show:
+        beta_mean = df.mean(axis = 1)
+        plt.scatter(
+            so_obj.adata.obsm['spatial'][:, 0], 
+            so_obj.adata.obsm['spatial'][:, 1], 
+            c=beta_mean, cmap='viridis', s=0.5
         )
+        plt.colorbar()
+
+    return df
+
+
+def show_beta_neighborhoods(adata, betas, nneighborhoods=20, seed=1334, split_spatially=False):
+
+    kmeans = KMeans(n_clusters=nneighborhoods, random_state=seed).fit(betas)
+    labels = kmeans.labels_
+
+    x_positions = adata.obsm['spatial'][:, 0]
+    y_positions = adata.obsm['spatial'][:, 1]
+
+    if split_spatially:
+        new_labels = np.empty(len(x_positions), dtype=str)
+
+        for cluster_id in np.unique(labels):
+
+            cluster_points = np.vstack((
+                x_positions[labels == cluster_id],
+                y_positions[labels == cluster_id]
+            )).T
+
+            dbscan = DBSCAN(eps=10, min_samples=100)
+            subcluster_labels = dbscan.fit_predict(cluster_points)
+
+            subcluster_labels = [
+                f"{cluster_id}_{label}" if label != -1 else f"{cluster_id}_noise"
+                for label in subcluster_labels
+            ]
+
+            idxs = np.where(labels == cluster_id)
+            new_labels[idxs] = subcluster_labels
+
+        labels = np.array(new_labels)
+        nneighborhoods = len(np.unique(labels)) 
+
+
+    colors = plt.cm.tab20(np.linspace(0, 1, nneighborhoods))
+    cmap = {label: colors[i] for i, label in enumerate(np.unique(labels))}
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    for label in np.unique(labels):
+        group_cells = np.where(labels == label)[0]
+        x = x_positions[group_cells]
+        y = y_positions[group_cells]
+
+        ax.scatter(x, y, color=cmap[label], alpha=0.8, s=3, label=f"Cluster {label}")
+
+    ax.set_title("Neighborhoods from Betas")
     ax.axis('off')
-
-    norm = None
-    cbar_width = 0.15  # Width of each colorbar
-    cbar_height = 0.8 / len(cmaps)  # Height of each colorbar
-    for i, cmap_name in cmaps.items():
-        if i not in [0, 1, 2]:
-            continue
-        cmap = plt.get_cmap(cmap_name)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cax_i = cax.inset_axes([0.2, 0.95 - (i+1)*cbar_height*2.5, cbar_width, cbar_height*1.5])
-        cbar = fig.colorbar(sm, cax=cax_i, orientation='vertical')
-        cbar.ax.tick_params(labelsize=9)  # Reduce tick label size
-        cbar.ax.set_title(f'{cell_map[i]}', fontsize=12, pad=8)  # Reduce title size and padding
-
-    cax.set_ylabel(plot_for, fontsize=8)
-    cax.axis('off')
-
-    unique_styles = sorted(set(df['rctd_celltypes']))
-    style_handles = [plt.Line2D([0], [0], marker=m, color='w', markerfacecolor='gray', 
-                    markersize=10, linestyle='None', alpha=1) 
-                    for m in markers][:len(unique_styles)]
-    ax.legend(style_handles, unique_styles, ncol=1,
-        title='Cell types', loc='upper left', 
-        frameon=False)
-
-    ax.set_title(f'{plot_for} > {target_gene}', fontsize=15)
     plt.tight_layout()
     plt.show()
+
+    return labels
