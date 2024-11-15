@@ -7,7 +7,7 @@ import os
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch.utils.data import DataLoader, Dataset
 from sklearn.linear_model import ARDRegression
 from group_lasso import GroupLasso
@@ -161,9 +161,9 @@ class SpatialCellularProgramsEstimator:
         self.lr = expand_paired_interactions(df_ligrec)
         self.lr = self.lr[self.lr.ligand.isin(self.adata.var_names) & (self.lr.receptor.isin(self.adata.var_names))]
 
-        receptors = self.lr['receptor']
-        recex_means = np.mean(self.adata.to_df(layer=self.layer)[receptors], axis=0)
-        self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
+        # receptors = self.lr['receptor']
+        # recex_means = np.mean(self.adata.to_df()[receptors], axis=0)
+        # self.lr = self.lr.iloc[np.argwhere(recex_means > receptor_thresh).flatten()]
 
         self.lr = self.lr[~((self.lr.receptor == self.target_gene) | (self.lr.ligand == self.target_gene))]
         self.lr['pairs'] = self.lr.ligand.values + '$' + self.lr.receptor.values
@@ -288,7 +288,7 @@ class SpatialCellularProgramsEstimator:
 
 
         self.train_df = self.adata.to_df(layer=self.layer)[
-            self.regulators+[self.target_gene]] \
+            [self.target_gene]+self.regulators] \
             .join(self.adata.uns['ligand_receptor']) \
             .join(self.adata.uns['ligand_regulator'])
         
@@ -306,7 +306,7 @@ class SpatialCellularProgramsEstimator:
         self.adata.obsm['spatial_features'] = self.spatial_features.copy()
 
         self.spatial_features = pd.DataFrame(
-            StandardScaler().fit_transform(self.spatial_features.values), 
+            MinMaxScaler().fit_transform(self.spatial_features.values), 
             columns=self.spatial_features.columns, 
             index=self.spatial_features.index
         )
@@ -387,7 +387,6 @@ class SpatialCellularProgramsEstimator:
             print(f'\t{len(self.lr_pairs)} Ligand-Receptor Pairs')
             print(f'\t{len(self.tfl_pairs)} TranscriptionFactor-Ligand Pairs')
 
-        
         for cluster in np.unique(cluster_labels):
             mask = cluster_labels == cluster
             X_cell, y_cell = self.Xn[mask], self.yn[mask]
@@ -411,7 +410,9 @@ class SpatialCellularProgramsEstimator:
                 r2_ard = r2_score(y_cell, y_pred)
 
                 intercept = (m1.intercept_ + m2.intercept_ + m3.intercept_) / 3
-                _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
+                coefs = np.hstack[m1.coef_, m2.coef_, m3.coef_]
+                _betas = np.hstack([intercept, coefs])
+                # _betas = np.hstack([intercept, m1.coef_, m2.coef_, m3.coef_])
 
                 # m = ARDRegression(threshold_lambda=threshold_lambda)
                 # m.fit(X_cell, y_cell)
@@ -473,20 +474,6 @@ class SpatialCellularProgramsEstimator:
             )
 
             assert _betas.shape[0] == len(self.modulators)+1
-
-            # _m = self.models.get(0, None)
-
-            # if _m is None:
-            #     model = CellularNicheNetwork(
-            #         n_modulators = len(self.modulators), 
-            #         anchors=_betas,
-            #         spatial_dim=self.spatial_dim,
-            #         n_clusters=self.n_clusters
-            #     ).to(self.device)
-
-            # else:
-            #     model = copy.deepcopy(_m).to(self.device)
-
 
             model = CellularNicheNetwork(
                     n_modulators = len(self.modulators), 

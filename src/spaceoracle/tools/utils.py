@@ -8,9 +8,13 @@ import functools
 import inspect
 import warnings
 import pickle
-from sklearn.neighbors import kneighbors_graph, NearestNeighbors
+from sklearn.neighbors import NearestNeighbors
+from scipy.sparse import csr_matrix
 from scipy import sparse
+from tqdm import tqdm
 import io
+import networkx as nx
+
 
 class CPU_Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
@@ -149,3 +153,29 @@ def min_max_df(df):
         columns=df.columns,
         index=df.index
     )
+
+
+def prune_neighbors(dsi, dist, maxl):
+    num_samples = dsi.shape[0]
+
+    rows = np.repeat(np.arange(num_samples), dsi.shape[1])
+    cols = dsi.flatten()
+    weights = dist.flatten()
+
+    adjacency = np.zeros((num_samples, num_samples), dtype=weights.dtype)
+    adjacency[rows, cols] = weights
+    np.fill_diagonal(adjacency, 0) 
+
+    for i in range(num_samples):
+        row = adjacency[i]
+        non_zero_indices = np.nonzero(row)[0]
+        if len(non_zero_indices) > maxl:
+            sorted_indices = non_zero_indices[np.argsort(row[non_zero_indices])] # indices sorted by weight
+            to_remove = sorted_indices[maxl:]  # set all connections with high weight to 0
+            adjacency[i, to_remove] = 0
+
+    adjacency = np.minimum(adjacency, adjacency.T)
+    bknn = csr_matrix(adjacency)
+    return bknn
+
+
