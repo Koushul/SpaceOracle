@@ -62,7 +62,7 @@ class Oracle(ABC):
         
         if 'imputed_count' not in self.adata.layers:
             self.pcs = self.perform_PCA(self.adata)
-            self.knn_imputation(self.adata, self.pcs, balanced=True)
+            self.knn_imputation(self.adata, self.pcs, method='MAGIC')
 
         clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
@@ -85,8 +85,8 @@ class Oracle(ABC):
     @staticmethod
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=50, maximum=False,
-                       balanced=False, b_sight=None, b_maxl=None,
-                       method='CellOracle', n_jobs=8) -> None:
+                       balanced=True, b_sight=None, b_maxl=None,
+                       method='MAGIC', n_jobs=8) -> None:
         
         supported_methods = ['CellOracle', 'MAGIC', 'knn-smoothing']
         assert method in supported_methods, f'method is not implemented, choose from {supported_methods}'
@@ -105,7 +105,7 @@ class Oracle(ABC):
         n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
 
-        if method is 'CellOracle':
+        if method == 'CellOracle':
             if balanced:
                 nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
                 nn.fit(space)
@@ -126,17 +126,17 @@ class Oracle(ABC):
             Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
             adata.layers["imputed_count"] = Xx.transpose().copy()
             
-        elif method is 'MAGIC':
+        elif method == 'MAGIC':
             import magic
-
+            
+            X = X.T
             magic_operator = magic.MAGIC()
-            X = adata.layers['normalized_count']
             X = pd.DataFrame(X, columns=adata.var_names, index=adata.obs_names)
             X_magic = magic_operator.fit_transform(X, genes='all_genes')
 
             adata.layers['imputed_count'] = X_magic
         
-        elif method is 'knn-smoothing':
+        elif method == 'knn-smoothing':
             from .tools.knn_smooth import knn_smoothing
 
             d = 10          # n pcs default 10
