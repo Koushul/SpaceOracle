@@ -86,7 +86,10 @@ class Oracle(ABC):
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=50, maximum=False,
                        balanced=False, b_sight=None, b_maxl=None,
-                       group_constraint=None, n_jobs=8) -> None:
+                       method='CellOracle', n_jobs=8) -> None:
+        
+        supported_methods = ['CellOracle', 'MAGIC', 'knn-smoothing']
+        assert method in supported_methods, f'method is not implemented, choose from {supported_methods}'
         
         X = _adata_to_matrix(adata, "normalized_count")
 
@@ -102,30 +105,52 @@ class Oracle(ABC):
         n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
 
-        if balanced:
-            nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
-            nn.fit(space)
+        if method is 'CellOracle':
+            if balanced:
+                nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
+                nn.fit(space)
 
-            dist, dsi = nn.kneighbors(space, return_distance=True)
-            knn = prune_neighbors(dsi, dist, b_maxl)
+                dist, dsi = nn.kneighbors(space, return_distance=True)
+                knn = prune_neighbors(dsi, dist, b_maxl)
+            
+            else:
+                knn = knn_distance_matrix(space, metric=metric, k=k,
+                                                mode="distance", n_jobs=n_jobs)
+            
+            connectivity = (knn > 0).astype(float)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                connectivity.setdiag(diag)
+            knn_smoothing_w = connectivity_to_weights(connectivity)
 
-            # bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
-            #                    metric=metric, mode="distance", n_jobs=n_jobs)
-            # bknn.fit(space)
-            # knn = bknn.kneighbors_graph(mode="distance")
+            Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
+            adata.layers["imputed_count"] = Xx.transpose().copy()
+            
+        elif method is 'MAGIC':
+            import magic
+
+            magic_operator = magic.MAGIC()
+            X = adata.layers['normalized_count']
+            X = pd.DataFrame(X, columns=adata.var_names, index=adata.obs_names)
+            X_magic = magic_operator.fit_transform(X, genes='all_genes')
+
+            adata.layers['imputed_count'] = X_magic
         
-        else:
-            knn = knn_distance_matrix(space, metric=metric, k=k,
-                                            mode="distance", n_jobs=n_jobs)
-        
-        connectivity = (knn > 0).astype(float)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            connectivity.setdiag(diag)
-        knn_smoothing_w = connectivity_to_weights(connectivity)
+        elif method is 'knn-smoothing':
+            from .tools.knn_smooth import knn_smoothing
 
-        Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
-        adata.layers["imputed_count"] = Xx.transpose().copy()
+            d = 10          # n pcs default 10
+            dither = 0.03   # default 0.03 
+            k = 32          # number of neighbors 
+
+            matrix = adata.layers['raw_count'].T 
+            S = knn_smoothing(matrix, k, d=d, dither=dither, seed=1334)
+
+            adata.layers['imputed_count'] = S.T
+
+            
+        
+        
 
         
 @dataclass

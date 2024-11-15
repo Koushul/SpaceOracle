@@ -10,7 +10,7 @@ numba==0.60.0
 # numpy==2.0.1
 pandas==2.2.2
 # plotly==5.23.0
-pybedtools==0.10.0
+# pybedtools==0.10.0
 pysal==24.1
 pytest==8.3.2
 python_igraph==0.11.6
