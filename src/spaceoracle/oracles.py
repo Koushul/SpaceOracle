@@ -29,6 +29,8 @@ from sklearn.linear_model import Ridge
 from sklearn.neighbors import NearestNeighbors
 
 from .tools.network import DayThreeRegulatoryNetwork
+from .tools.knn_smooth import knn_smoothing
+
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.pixel_attention import NicheAttentionNetwork
 from .models.parallel_estimators import SpatialCellularProgramsEstimator, received_ligands
@@ -66,7 +68,7 @@ class BaseTravLR(ABC):
         
         if 'imputed_count' not in self.adata.layers:
             self.pcs = self.perform_PCA(self.adata)
-            self.knn_imputation(self.adata, self.pcs, balanced=True)
+            self.knn_imputation(self.adata, self.pcs, method='MAGIC')
 
         clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
 
@@ -90,7 +92,10 @@ class BaseTravLR(ABC):
     def knn_imputation(adata, pcs, k=None, metric="euclidean", diag=1,
                        n_pca_dims=50, maximum=False,
                        balanced=True, b_sight=None, b_maxl=None,
-                       group_constraint=None, n_jobs=8) -> None:
+                       method='MAGIC', n_jobs=8) -> None:
+        
+        supported_methods = ['CellOracle', 'MAGIC', 'knn-smoothing']
+        assert method in supported_methods, f'method is not implemented, choose from {supported_methods}'
         
         X = _adata_to_matrix(adata, "normalized_count")
 
@@ -106,33 +111,51 @@ class BaseTravLR(ABC):
         n_pca_dims = min(n_pca_dims, pcs.shape[1])
         space = pcs[:, :n_pca_dims]
 
-        if balanced:
-            nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
-            nn.fit(space)
+        if method == 'CellOracle':
+            if balanced:
+                nn = NearestNeighbors(n_neighbors=b_sight + 1, metric=metric, n_jobs=n_jobs, leaf_size=30)
+                nn.fit(space)
 
-            dist, dsi = nn.kneighbors(space, return_distance=True)
+                dist, dsi = nn.kneighbors(space, return_distance=True)
+                knn = prune_neighbors(dsi, dist, b_maxl)
+            
+            else:
+                knn = knn_distance_matrix(space, metric=metric, k=k,
+                                                mode="distance", n_jobs=n_jobs)
+            
+            connectivity = (knn > 0).astype(float)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                connectivity.setdiag(diag)
+            knn_smoothing_w = connectivity_to_weights(connectivity)
 
-            knn = prune_neighbors(dsi, dist, b_maxl)
+            Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
+            adata.layers["imputed_count"] = Xx.transpose().copy()
+            
+        elif method == 'MAGIC':
+            import magic
+            
+            X = X.T
+            magic_operator = magic.MAGIC()
+            X = pd.DataFrame(X, columns=adata.var_names, index=adata.obs_names)
+            X_magic = magic_operator.fit_transform(X, genes='all_genes')
 
-            # bknn = BalancedKNN(k=k, sight_k=b_sight, maxl=b_maxl,
-            #                    metric=metric, mode="distance", n_jobs=n_jobs)
-            # bknn.fit(space)
-            # knn = bknn.kneighbors_graph(mode="distance")
+            adata.layers['imputed_count'] = X_magic
         
-        else:
-            knn = knn_distance_matrix(space, metric=metric, k=k,
-                                            mode="distance", n_jobs=n_jobs)
+        elif method == 'knn-smoothing':
+
+            d = 10          # n pcs default 10
+            dither = 0.03   # default 0.03 
+            k = 32          # number of neighbors 
+
+            matrix = adata.layers['raw_count'].T 
+            S = knn_smoothing(matrix, k, d=d, dither=dither, seed=1334)
+
+            adata.layers['imputed_count'] = S.T
+
+            
         
-        connectivity = (knn > 0).astype(float)
-        # if not isinstance(connectivity, sparse.csr_matrix):
-        #     connectivity = sparse.csr_matrix(connectivity)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-        knn_smoothing_w = connectivity_to_weights(connectivity)
-
-        Xx = convolve_by_sparse_weights(X, knn_smoothing_w)
-        adata.layers["imputed_count"] = Xx.transpose().copy()
+        
 
         
 @dataclass
