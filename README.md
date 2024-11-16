@@ -6,7 +6,7 @@
 
 ## Example Output
 
-![Beta Coefficients Example](./notebooks/beta_example.png)
+![Poster](./notebooks/beta_example.png)
 
 
 
