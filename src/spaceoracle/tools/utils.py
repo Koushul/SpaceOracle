@@ -1,4 +1,4 @@
-from numba import jit
+from numba import jit, njit, prange
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -177,5 +177,3 @@ def prune_neighbors(dsi, dist, maxl):
     adjacency = np.minimum(adjacency, adjacency.T)
     bknn = csr_matrix(adjacency)
     return bknn
-
-

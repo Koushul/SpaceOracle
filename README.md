@@ -6,8 +6,6 @@
 
 ## Example Output
 
-Below is an example of the beta coefficients estimated by SpaceOracle:
-
 ![Beta Coefficients Example](./notebooks/beta_example.png)
 
 
