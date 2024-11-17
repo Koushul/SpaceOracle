@@ -2,6 +2,8 @@ from abc import ABC
 import warnings
 
 from scipy import sparse
+
+from spaceoracle.beta import BetaOutput
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 import numpy as np
@@ -12,8 +14,6 @@ import time
 import pandas as pd
 import pickle
 import torch
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
 from tqdm import tqdm
 import os
 import datetime
@@ -158,18 +158,7 @@ class BaseTravLR(ABC):
         
 
         
-@dataclass
-class BetaOutput:
-    betas: np.ndarray
-    modulator_genes: List[str]
-    modulator_gene_indices: List[int]
-    ligands: Optional[List[str]] = None
-    receptors: Optional[List[str]] = None
-    tfl_ligands: Optional[List[str]] = None
-    tfl_regulators: Optional[List[str]] = None
-    ligand_receptor_pairs: Optional[List[Tuple[str, str]]] = None
-    tfl_pairs: Optional[List[Tuple[str, str]]] = None
-    wbetas: Optional[Tuple[str, pd.DataFrame]] = None
+
 
 
 class OracleQueue:
@@ -404,22 +393,6 @@ class SpaceTravLR(BaseTravLR):
             train_bar.count = 0
             train_bar.start = time.time()
 
-    @staticmethod
-    def load_estimator(gene, spatial_dim, nclusters, save_dir):
-        with open(f'{save_dir}/{gene}_estimator.pkl', 'rb') as f:
-            loaded_dict =  CPU_Unpickler(f).load()
-
-            model = NicheAttentionNetwork(
-                len(loaded_dict['regulators']), 
-                nclusters, 
-                spatial_dim
-            )
-            model.load_state_dict(loaded_dict['model'])
-
-            loaded_dict['model'] = model
-
-        return loaded_dict
-    
 
     @staticmethod
     def load_betadata(gene, save_dir):

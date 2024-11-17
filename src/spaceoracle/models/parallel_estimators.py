@@ -33,7 +33,6 @@ def calculate_weighted_ligands(gauss_weights, lig_df_values, u_ligands):
     return weighted_ligands
 
 def received_ligands(xy, lig_df, radius=200, scale_factor=1e5):
-    """Returns a min_max-normalized df of wL"""
     ligands = lig_df.columns
     gauss_weights = [
         scale_factor * gaussian_kernel_2d(

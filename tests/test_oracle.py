@@ -9,7 +9,7 @@ import shutil
 from unittest.mock import patch, MagicMock
 
 from spaceoracle.tools.network import DayThreeRegulatoryNetwork
-from spaceoracle.oracles import Oracle, OracleQueue, SpaceOracle
+from spaceoracle.oracles import *
 from spaceoracle.models.probabilistic_estimators import ProbabilisticPixelModulators
 
 import anndata as ad
@@ -47,14 +47,14 @@ def temp_dir():
 
 def test_oracle_initialization(mock_adata_with_true_betas):
     adata = mock_adata_with_true_betas
-    oracle = Oracle(adata)
+    oracle = BaseTravLR(adata)
     assert 'imputed_count' in oracle.adata.layers
     assert oracle.pcs is None
     assert oracle.gene2index is not None
 
     del adata.layers['imputed_count']
     adata = mock_adata_with_true_betas
-    oracle = Oracle(adata)
+    oracle = BaseTravLR(adata)
     assert 'imputed_count' in oracle.adata.layers
     assert oracle.pcs is not None
     assert oracle.gene2index is not None
@@ -97,7 +97,7 @@ def test_oracle_queue_operations(temp_dir):
 
 def test_space_oracle_initialization(mock_adata_with_true_betas, temp_dir):
     adata = mock_adata_with_true_betas
-    space_oracle = SpaceOracle(adata, save_dir=temp_dir)
+    space_oracle = SpaceTravLR(adata, save_dir=temp_dir)
     assert space_oracle.adata is not None
     assert space_oracle.grn is not None
     assert space_oracle.queue is not None
