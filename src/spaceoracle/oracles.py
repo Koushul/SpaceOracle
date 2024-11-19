@@ -423,55 +423,10 @@ class SpaceTravLR(BaseTravLR):
 
         return betas_dict
 
-    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betaoutput):
-
-        modulators = betaoutput.modulators_genes
-
-        betas_df = self.estimate_gene_wbetas(
-            rw_ligands=rw_ligands, 
-            betas_df=betaoutput, 
-            gex_df=gex_df, 
-            ligands=betaoutput.ligands,
-            receptors=betaoutput.receptors,
-            tfl_ligands=betaoutput.tfl_ligands,
-            tfl_regulators=betaoutput.tfl_regulators,
-            ligand_receptor_pairs=betaoutput.lr_pairs,
-            tfl_pairs=betaoutput.tfl_pairs
-        )
-
-        betas_df = betas_df[modulators] # reindex so it's the correct order
+    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betadata):
+        betas_df = betadata.splash(rw_ligands, gex_df)
         return betas_df
         
-    @staticmethod
-    def estimate_gene_wbetas(
-        rw_ligands, betas_df, gex_df, ligands, receptors, 
-        tfl_ligands, tfl_regulators, ligand_receptor_pairs, tfl_pairs):
-        
-        ## wL is the amount of ligand 'received' at each location
-        ## assuming ligands and receptors expression are independent, dL/dR = 0
-        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
-        ## dy/dTF1 = b1
-        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
-        ##         = b2*R1 + b3*R2
-        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
-        
-
-        _df_lr = pd.DataFrame(
-            betas_df[[f'beta_{a}${b}' for a, b in ligand_receptor_pairs]*2].values * \
-                rw_ligands[ligands].join(gex_df[receptors]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in receptors]+[f'beta_{l}' for l in ligands]
-        )
-
-        _df_tfl = pd.DataFrame(
-            betas_df[[f'beta_{a}#{b}' for a, b in tfl_pairs]*2].values * \
-                rw_ligands[tfl_ligands].join(gex_df[tfl_regulators]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in tfl_regulators]+[f'beta_{l}' for l in tfl_ligands]
-        )
-
-        return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
-
 
     def _get_spatial_betas_dict(self):
         bdb = Betabase(self.adata, self.save_dir)

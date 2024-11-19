@@ -1,239 +1,22 @@
 import numpy as np 
 import pandas as pd 
 from tqdm import tqdm
-import torch.nn.functional as F
-
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import plotly.graph_objects as go
-import plotly.express as px
-
-from scipy.stats import pearsonr
-from sklearn.neighbors import NearestNeighbors
+import matplotlib.cm as cm
 from sklearn.preprocessing import MinMaxScaler
-from pqdm.processes import pqdm
-from velocyto.estimation import colDeltaCorpartial, colDeltaCor
 
+from .layout import plot_quiver, plot_vectorfield
+from .shift import *
 
-def plot_quiver(grid_points, vector_field, background=None, ax=None):
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
-
-    if background is not None:
-        cmap = plt.get_cmap('tab20')
-        celltypes = np.unique(background['annot'])
-        category_colors = {ct: cmap(i / len(celltypes)) for i, ct in enumerate(celltypes)}
-        colors = [category_colors[ct] for ct in background['annot']]
-
-        ax.scatter(background['X'], background['Y'], c=colors, alpha=0.3, s=2)
-
-    magnitudes = np.linalg.norm(vector_field, axis=1)
-    indices = magnitudes > 0
-    grid_points = grid_points[indices]
-    vector_field = vector_field[indices]
-
-    ax.quiver(
-        grid_points[:, 0], grid_points[:, 1],   
-        vector_field[:, 0], vector_field[:, 1], 
-        angles='xy', scale_units='xy', scale=1, 
-        headwidth=3, headlength=3, headaxislength=3, width=0.002
-    )
-
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_title('2D Estimated Transition Visualization')
-    ax.set_axis_off()
-
-    if ax is not None:
-        return ax
-    
-    plt.show()
-
-def plot_vectorfield(grid_points, vector_field, background=None):
-    x, y, z = grid_points[:, 0], grid_points[:, 1], grid_points[:, 2]
-    u, v, w = vector_field[..., 0].flatten(), vector_field[..., 1].flatten(), vector_field[..., 2].flatten()
-    zrange = [np.min(z) - 0.1, np.max(z) + 0.1]
-    # zrange = [np.min(z) - 0.6, np.max(z) + 0.6]
-
-    fig = go.Figure(data=go.Cone(
-        x=x, y=y, z=z,
-        u=u, v=v, w=w,
-        colorscale='solar',
-        showscale=True,
-        colorbar=dict(title="Vector Intensity", len=0.5, x=1.1),
-        sizemode="scaled",
-        sizeref=1.5,
-        anchor="tail",
-        lighting=dict(diffuse=0.9, specular=0.1) 
-    ))
-
-    if background is not None:
-        scatter_fig = px.scatter_3d(background, x='X', y='Y', z='Z', color='annot')
-        scatter_fig.update_traces(marker=dict(size=1), line=dict(width=2, color='black'))
-
-        for trace in scatter_fig.data:
-            fig.add_trace(trace)
-
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='X'),
-            yaxis=dict(title='Y'),
-            zaxis=dict(title='Z', range=zrange),
-        ),
-        title='3D Estimated Transition Visualization',
-        margin=dict(l=0, r=0, b=0, t=50), 
-        scene_camera=dict(eye=dict(x=1.5, y=1.5, z=0.8)) 
-    )
-    fig.show()
-
-def compute_probability(i, d_i, gene_mtx, indices, n_cells, T):
-    exp_corr_sum = 0
-    row_probs = np.zeros(n_cells)
-    
-    for j in indices[i]:
-        r_ij = gene_mtx[i] - gene_mtx[j]
-        corr, _ = pearsonr(r_ij, d_i)
-        if np.isnan(corr):
-            corr = 1
-        exp_corr = np.exp(corr / T)
-        exp_corr_sum += exp_corr
-        row_probs[j] = exp_corr
-
-    if exp_corr_sum != 0:
-        row_probs /= exp_corr_sum
-
-    return np.array(row_probs)
-
-## CellOracle uses adapted Velocyto code
-## This function is coded exactly as described in CellOracle paper
-def estimate_transition_probabilities(adata, delta_X, embedding=None, n_neighbors=200, 
-random_neighbors=False, annot=None, T=0.05, n_jobs=1):
-
-    n_cells, n_genes = adata.shape
-    delta_X = np.array(delta_X)
-    gene_mtx = adata.layers['imputed_count']
-    
-    if n_neighbors is None:
-
-        P = np.ones((n_cells, n_cells))
-
-        corr = colDeltaCor(
-            np.ascontiguousarray(gene_mtx.T), 
-            np.ascontiguousarray(delta_X.T), 
-            threads=n_jobs
-            )
-    
-    else:
-
-        P = np.zeros((n_cells, n_cells))
-
-        n_neighbors = min(n_cells, n_neighbors)
-        
-        if random_neighbors == 'even':
-
-            cts = np.unique(adata.obs[annot])
-            ct_dict = {ct: np.where(adata.obs[annot] == ct)[0] for ct in cts}
-            cells_per_ct = round(n_neighbors / len(cts))
-
-            indices = []
-
-            for i in range(n_cells):
-                i_indices = []
-
-                for ct, ct_cells in ct_dict.items():
-
-                    sample = np.random.choice(ct_cells[ct_cells != i], size=cells_per_ct, replace=False)
-                    i_indices.extend(sample)
-
-                i_indices = np.array(i_indices)
-                P[i, i_indices] = 1
-                indices.append(i_indices)
-
-            indices = np.array(indices)
-
-        elif random_neighbors:
-            
-            indices = []
-            cells = np.arange(n_cells)
-            for i in range(n_cells):
-                i_indices = np.random.choice(np.delete(cells, i), size=n_neighbors, replace=False)
-                P[i, i_indices] = 1
-                indices.append(i_indices)
-            
-            indices = np.array(indices)
-
-        else: 
-
-            nn = NearestNeighbors(n_neighbors=n_neighbors, n_jobs=n_jobs)
-            nn.fit(embedding)
-            _, indices = nn.kneighbors(embedding)
-
-            rows = np.repeat(np.arange(n_cells), n_neighbors)
-            cols = indices.flatten()
-            P[rows, cols] = 1
-
-        corr = colDeltaCorpartial(
-            np.ascontiguousarray(gene_mtx.T), 
-            np.ascontiguousarray(delta_X.T), 
-            indices, threads=n_jobs
-            )
-
-    np.fill_diagonal(P, 0)
-    
-    corr = np.nan_to_num(corr, nan=1)
-
-    P *= np.exp(corr / T)   
-    P /= P.sum(1)[:, None]
-
-    # args = [[i, delta_X[i], gene_mtx, indices, n_cells, T] for i in range(n_cells)]
-    # results = pqdm(
-    #     args,
-    #     compute_probability,
-    #     n_jobs=n_jobs,
-    #     argument_type='args',
-    #     tqdm_class=tqdm,
-    #     desc='Estimating cell transition probabilities',
-    # )
-
-    # for i, row_probs in enumerate(results):
-    #     P[i] = np.array(row_probs)
-
-    return P
-
-def project_probabilities(P, embedding, normalize=True):
-    if normalize: 
-        embed_dim = embedding.shape[1]
-
-        embedding_T = embedding.T # shape (m, n_cells)
-        unitary_vectors = embedding_T[:, None, :] - embedding_T[:, :, None]  # shape (m, n_cells, n_cells)
-        
-        # Normalize the difference vectors (L2 norm)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            norms = np.linalg.norm(unitary_vectors, ord=2, axis=0)  # shape (n_cells, n_cells)
-            unitary_vectors /= norms
-            for m in range(embed_dim):
-                np.fill_diagonal(unitary_vectors[m, ...], 0)   
-        
-        delta_embedding = (P * unitary_vectors).sum(2)  # shape (m, n_cells)
-        delta_embedding = delta_embedding.T
-        
-        return delta_embedding
-    
-    else:
-        embed_diffs = embedding[np.newaxis, :, :] - embedding[:, np.newaxis, :]
-        
-        # masked = embed_diffs * P[:, :, np.newaxis]
-        # V_simulated = np.sum(masked, axis=1)
-        V_simulated = np.einsum('ij,ijk->ik', P, embed_diffs)
-        
-        return V_simulated
 
 def estimate_transitions_2D(adata, delta_X, embedding, annot=None, normalize=True, 
-n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
+n_neighbors=200, vector_scale=1, n_jobs=1):
 
     P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=n_neighbors, n_jobs=n_jobs)
     V_simulated = project_probabilities(P, embedding, normalize=normalize)
 
+    grid_scale = 10 / np.mean(abs(np.diff(embedding)))
+    print(grid_scale)
     get_grid_points = lambda min_val, max_val: np.linspace(min_val, max_val, 
                                                            int((max_val - min_val + 1) * grid_scale))
 
@@ -252,9 +35,7 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
         (np.abs(embedding[:, 1] - grid_point[1]) <= y_thresh)   
     )[0]
 
-
     for idx, grid_point in tqdm(enumerate(grid_points), desc='Computing vectors', total=len(grid_points)):
-        smoothed_vector = np.zeros(2)
 
         # Get average vector within neighborhood
         indices = get_neighborhood(grid_point, embedding)
@@ -275,6 +56,7 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
     # adata.uns['V_simulated'] = V_simulated
     ###
 
+    vector_scale = vector_scale / np.max(vector_field)
     vector_field *= vector_scale
     if annot is None:
         background = None
@@ -284,7 +66,9 @@ n_neighbors=200, vector_scale=0.1, grid_scale=1, n_jobs=1):
             'Y': embedding[:, 1], 
             'annot': list(adata.obs[annot]),
         }
+
     plot_quiver(grid_points, vector_field, background=background)
+
 
 def estimate_transitions_3D(adata, delta_X, embedding, annot=None, normalize=True, 
 vector_scale=0.1, grid_scale=1, n_jobs=1):
@@ -351,7 +135,7 @@ vector_scale=0.1, grid_scale=1, n_jobs=1):
     plot_vectorfield(grid_points, vector_field, background)
 
 
-def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
+def estimate_celltocell_transitions(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
 
     n_neighbors=200
 
@@ -397,3 +181,83 @@ def view_probabilities(adata, delta_X, embedding, cluster=None, annot=None, log_
     plt.show()
 
     plt.tight_layout()
+
+
+def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=1,
+                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], n_jobs=1):
+    
+    missing_clusters = set(visual_clusters) - set(adata.obs[annot])
+    if missing_clusters:
+        raise ValueError(f"Invalid cell types: {', '.join(missing_clusters)}")
+
+    P = estimate_transition_probabilities(
+        adata, delta_X, embedding, n_neighbors=n_neighbors, annot=annot, 
+        random_neighbors='even', n_jobs=n_jobs
+    )
+
+    # Convert cell x cell -> cell x cell-type transition P
+    unique_clusters, cluster_indices = np.unique(adata.obs[annot], return_inverse=True)
+    cluster_mask = np.zeros((adata.n_obs, len(unique_clusters)))
+    cluster_mask[np.arange(adata.n_obs), cluster_indices] = 1
+
+    P_ct = P @ cluster_mask
+
+    # Renormalize after selecting cell types of interest
+    visual_idxs = [unique_clusters.tolist().index(ct) for ct in visual_clusters]
+    P_ct = P_ct[:, visual_idxs]
+    # if renormalize:
+    #     P_ct = P_ct / P_ct.sum(axis=1, keepdims=True)
+
+    # Project probabilities into vectors for each cell
+    angles = np.linspace(0, 360, len(visual_clusters), endpoint=False)
+    angles_rad = np.deg2rad(angles)
+    x = np.cos(angles_rad)
+    y = np.sin(angles_rad)
+
+    directions = np.column_stack((x, y)) # (ct x 2)
+    vectors = P_ct @ directions          # (cell x 2)
+    adata.obsm['celltype_vectors'] = vectors
+
+    # x_positions = adata.obsm['spatial'][:, 0]
+    # y_positions = adata.obsm['spatial'][:, 1]
+    x_positions = embedding[:, 0]
+    y_positions = embedding[:, 1]
+
+    vectors = vectors * vector_scale
+    x_directions = vectors[:, 0]
+    y_directions = vectors[:, 1]
+
+    # Plot gray scatter
+    categories = adata.obs[annot].astype('category')
+    codes = categories.cat.codes
+    plt.scatter(x_positions, y_positions, color='grey', alpha=0.3, s=3)
+
+    # Plot quiver
+    max_indices = np.argmax(P_ct, axis=1)
+    colors = np.array([codes[i] for i in max_indices])
+    # highest_transition = np.argmax(P, axis=1)
+    # colors = [codes[i] for i in highest_transition]
+
+    cmap = cm.get_cmap('tab10')
+    rgb_values = [cmap(c)[:3] for c in colors]
+
+    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
+            scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
+
+    # Plot colored scatter
+    # scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
+    # handles, labels = scatter.legend_elements(num=len(unique_clusters))
+    # plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    # Place quiver anchors
+    anchor_offset = 300
+    for i, (dx, dy, label) in enumerate(zip(directions[:, 0], directions[:, 1], visual_clusters)):
+        anchor_x = dx * anchor_offset
+        anchor_y = dy * anchor_offset
+        plt.quiver(0, 0, anchor_x, anchor_y, color=cmap(i), angles="xy", scale_units="xy", scale=1, width=0.005)
+        plt.text(anchor_x * 2.1, anchor_y * 1.9, label, color=cmap(i), ha='center', va='center', fontsize=10)
+
+    plt.axis('off')
+    plt.axis('equal')
+    plt.tight_layout()
+    plt.show()
