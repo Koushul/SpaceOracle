@@ -183,7 +183,7 @@ def estimate_celltocell_transitions(adata, delta_X, embedding, cluster=None, ann
     plt.tight_layout()
 
 
-def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=1,
+def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=100,
                         visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], n_jobs=1):
     
     missing_clusters = set(visual_clusters) - set(adata.obs[annot])
@@ -242,7 +242,7 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
     rgb_values = [cmap(c)[:3] for c in colors]
 
     plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
-            scale=0.01, angles="xy", scale_units="xy", linewidth=0.15)
+            scale=1, angles="xy", scale_units="xy", linewidth=0.15)
 
     # Plot colored scatter
     # scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
