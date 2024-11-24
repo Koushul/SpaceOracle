@@ -1,60 +1,24 @@
 import numpy as np 
 import pandas as pd 
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from sklearn.preprocessing import MinMaxScaler
+import seaborn as sns 
 
-from .layout import plot_quiver, plot_vectorfield
+import umap
+from sklearn.preprocessing import MinMaxScaler
+from numba import jit
+
+from .layout import plot_quiver, get_quiver_grid
 from .shift import *
 
 
 def estimate_transitions_2D(adata, delta_X, embedding, annot=None, normalize=True, 
-n_neighbors=200, vector_scale=1, n_jobs=1):
+n_neighbors=200, grid_scale=1, vector_scale=1, n_jobs=1, savepath=False):
 
     P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=n_neighbors, n_jobs=n_jobs)
     V_simulated = project_probabilities(P, embedding, normalize=normalize)
 
-    grid_scale = 10 / np.mean(abs(np.diff(embedding)))
-    print(grid_scale)
-    get_grid_points = lambda min_val, max_val: np.linspace(min_val, max_val, 
-                                                           int((max_val - min_val + 1) * grid_scale))
-
-    grid_x = get_grid_points(np.min(embedding[:, 0]), np.max(embedding[:, 0]))
-    grid_y = get_grid_points(np.min(embedding[:, 1]), np.max(embedding[:, 1]))
-    grid_points = np.array(np.meshgrid(grid_x, grid_y)).T.reshape(-1, 2)
-    size_x, size_y = len(grid_x), len(grid_y)
-    
-    vector_field = np.zeros((size_x, size_y, 2))
-
-    x_thresh = (grid_x[1] - grid_x[0]) / 2
-    y_thresh = (grid_y[1] - grid_y[0]) / 2
-
-    get_neighborhood = lambda grid_point, embedding: np.where(
-        (np.abs(embedding[:, 0] - grid_point[0]) <= x_thresh) &  
-        (np.abs(embedding[:, 1] - grid_point[1]) <= y_thresh)   
-    )[0]
-
-    for idx, grid_point in tqdm(enumerate(grid_points), desc='Computing vectors', total=len(grid_points)):
-
-        # Get average vector within neighborhood
-        indices = get_neighborhood(grid_point, embedding)
-        if len(indices) <= 0:
-            continue
-        nbr_vector = np.mean(V_simulated[indices], axis=0)
-        nbr_vector *= len(indices)       # upweight vectors with lots of cells
-            
-        grid_idx_x, grid_idx_y = np.unravel_index(idx, (size_x, size_y))
-        vector_field[grid_idx_x, grid_idx_y] = nbr_vector
-    
-    vector_field = vector_field.reshape(-1, 2)
-    
-    ### for testing, delete or save properly later
-    # adata.uns['grid_points'] = grid_points
-    # adata.uns['vector_field'] = vector_field
-    adata.uns['nn_transition_P'] = P
-    # adata.uns['V_simulated'] = V_simulated
-    ###
+    grid_points, vector_field = get_quiver_grid(embedding, grid_scale, V_simulated)
 
     vector_scale = vector_scale / np.max(vector_field)
     vector_field *= vector_scale
@@ -66,125 +30,20 @@ n_neighbors=200, vector_scale=1, n_jobs=1):
             'Y': embedding[:, 1], 
             'annot': list(adata.obs[annot]),
         }
+    plot_quiver(grid_points, vector_field, background=background, savepath=savepath)
 
-    plot_quiver(grid_points, vector_field, background=background)
+def randomize_transitions_2D(adata, delta_X, embedding, annot=None, normalize=True, 
+n_neighbors=200, grid_scale=1, vector_scale=0.1, n_jobs=1, savepath=False):
 
+    delta_X_rndm = np.copy(delta_X)
+    permute_rows_nsign(delta_X_rndm)
 
-def estimate_transitions_3D(adata, delta_X, embedding, annot=None, normalize=True, 
-vector_scale=0.1, grid_scale=1, n_jobs=1):
-    
-    P = estimate_transition_probabilities(adata, delta_X, embedding, n_jobs=n_jobs)
-    V_simulated = project_probabilities(P, embedding, normalize)
-    
-    get_grid_points = lambda min_val, max_val: np.linspace(min_val, max_val, 
-                                                           int((max_val - min_val + 1) * grid_scale))
-
-    grid_x = get_grid_points(np.min(embedding[:, 0]), np.max(embedding[:, 0]))
-    grid_y = get_grid_points(np.min(embedding[:, 1]), np.max(embedding[:, 1]))
-    grid_z = np.unique(embedding[...,2])
-    # grid_z = [0.5]
-
-    grid_points = np.array(np.meshgrid(grid_x, grid_y, grid_z)).T.reshape(-1, 3)
-    size_x, size_y, size_z = len(grid_x), len(grid_y), len(grid_z)
-    vector_field = np.zeros((size_x, size_y, size_z, 3))
-
-    x_thresh = (grid_x[1] - grid_x[0]) / 2
-    y_thresh = (grid_y[1] - grid_y[0]) / 2
-    z_thresh = 0.1
-    # z_thresh = 1
-
-    get_neighborhood = lambda grid_point, embedding: np.where(
-        (np.abs(embedding[:, 0] - grid_point[0]) <= x_thresh) &  
-        (np.abs(embedding[:, 1] - grid_point[1]) <= y_thresh) &
-        (np.abs(embedding[:, 2] - grid_point[2]) <= z_thresh)
-    )[0]
-    
-
-    for idx, grid_point in tqdm(enumerate(grid_points), desc='Computing vectors', total=len(grid_points)):
-        smoothed_vector = np.zeros(3)
-
-        # Get average vector within neighborhood
-        indices = get_neighborhood(grid_point, embedding)
-        if len(indices) <= 0:
-            continue
-        nbr_vector = np.mean(V_simulated[indices], axis=0)
-        nbr_vector *= len(indices)       # upweight vectors with lots of cells
-        
-        grid_idx_x, grid_idx_y, grid_idx_z = np.unravel_index(idx, (size_x, size_y, size_z))
-        vector_field[grid_idx_x, grid_idx_y, grid_idx_z] = nbr_vector
-    
-    ### for testing, delete or save properly later
-    # adata.uns['grid_points'] = grid_points
-    adata.uns['nn_transition_P'] = P
-    # adata.uns['P'] = P
-    # adata.uns['V_simulated'] = V_simulated
-    ###
-
-    vector_field = vector_field * vector_scale
-    
-    if annot is not None:
-        background = pd.DataFrame({
-                'X': adata.obsm['spatial_3D'][:, 0],
-                'Y': adata.obsm['spatial_3D'][:, 1],
-                'Z': adata.obsm['spatial_3D'][:, 2],
-                'annot': adata.obs[annot]
-            })
-    else:
-        background = None
-
-    plot_vectorfield(grid_points, vector_field, background)
-
-
-def estimate_celltocell_transitions(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
-
-    n_neighbors=200
-
-    if cluster is not None:
-        adata = adata.copy()
-        cell_idxs = np.where(adata.obs[annot] == cluster)[0]
-
-        delta_X = delta_X[cell_idxs, :]
-        embedding = embedding[cell_idxs, :]
-        adata = adata[adata.obs[annot] == cluster]
-
-        P = estimate_transition_probabilities(
-            adata, delta_X, embedding, n_neighbors=n_neighbors, random_neighbors=True, n_jobs=n_jobs)
-
-    elif 'transition_P' not in adata.uns:
-        # this it taking way too long
-        # P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=None, n_jobs=n_jobs)
-        
-        # quicker alternative, although may need adjusting
-        P = estimate_transition_probabilities(
-            adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
-        adata.uns['transition_P'] = P
-    
-    else:
-        P = adata.uns['transition_P']
-
-    x = embedding[:, 0]
-    y = embedding[:, 1]
-
-    if log_P:
-        P = np.where(P != 0, np.log(P), 0)
-
-    intensity = np.sum(P, axis=0).reshape(-1, 1)
-    intensity = MinMaxScaler().fit_transform(intensity)
-
-    plt.scatter(x, y, c=intensity, cmap='coolwarm', s=1, alpha=0.9, label='Transition Probabilities')
-
-    plt.colorbar(label='Transition Odds Post-perturbation')
-    if cluster is not None:
-        plt.title(f'{cluster} Subset Transition Probabilities')
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-
-    plt.tight_layout()
+    estimate_transitions_2D(adata, delta_X_rndm , embedding, annot, normalize, 
+        n_neighbors, grid_scale, vector_scale, n_jobs, savepath)
 
 
 def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster', n_neighbors=200, vector_scale=100,
-                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], n_jobs=1):
+                        visual_clusters=['B-cell', 'Th2', 'Cd8 T-cell'], grid_scale=1, n_jobs=1, savepath=False):
     
     missing_clusters = set(visual_clusters) - set(adata.obs[annot])
     if missing_clusters:
@@ -218,46 +77,167 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
     vectors = P_ct @ directions          # (cell x 2)
     adata.obsm['celltype_vectors'] = vectors
 
-    # x_positions = adata.obsm['spatial'][:, 0]
-    # y_positions = adata.obsm['spatial'][:, 1]
-    x_positions = embedding[:, 0]
-    y_positions = embedding[:, 1]
+    grid_points, vectors = get_quiver_grid(embedding, grid_scale, vectors)
+    vector_scale = vector_scale / np.max(vectors)
+    vectors *= vector_scale
 
-    vectors = vectors * vector_scale
-    x_directions = vectors[:, 0]
-    y_directions = vectors[:, 1]
-
-    # Plot gray scatter
-    categories = adata.obs[annot].astype('category')
-    codes = categories.cat.codes
-    plt.scatter(x_positions, y_positions, color='grey', alpha=0.3, s=3)
-
-    # Plot quiver
-    max_indices = np.argmax(P_ct, axis=1)
-    colors = np.array([codes[i] for i in max_indices])
-    # highest_transition = np.argmax(P, axis=1)
-    # colors = [codes[i] for i in highest_transition]
-
-    cmap = cm.get_cmap('tab10')
-    rgb_values = [cmap(c)[:3] for c in colors]
-
-    plt.quiver(x_positions, y_positions, x_directions, y_directions, color=rgb_values, 
-            scale=1, angles="xy", scale_units="xy", linewidth=0.15)
-
-    # Plot colored scatter
-    # scatter = plt.scatter(x_positions, y_positions, c=codes, alpha=0.8, s=3, cmap='tab10', edgecolors='none')
-    # handles, labels = scatter.legend_elements(num=len(unique_clusters))
-    # plt.legend(handles, unique_clusters, title="Cluster", bbox_to_anchor=(1.05, 1), loc='upper left')
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 8))
+    background = {
+            'X': embedding[:, 0], 
+            'Y': embedding[:, 1], 
+            'annot': list(adata.obs[annot]),
+        }
+    plot_quiver(grid_points, vectors, background, ax=ax, savepath=savepath)
 
     # Place quiver anchors
     anchor_offset = 300
-    for i, (dx, dy, label) in enumerate(zip(directions[:, 0], directions[:, 1], visual_clusters)):
+    for dx, dy, label in zip(directions[:, 0], directions[:, 1], visual_clusters):
         anchor_x = dx * anchor_offset
         anchor_y = dy * anchor_offset
-        plt.quiver(0, 0, anchor_x, anchor_y, color=cmap(i), angles="xy", scale_units="xy", scale=1, width=0.005)
-        plt.text(anchor_x * 2.1, anchor_y * 1.9, label, color=cmap(i), ha='center', va='center', fontsize=10)
+        plt.quiver(0, 0, anchor_x, anchor_y, angles="xy", scale_units="xy", scale=1, width=0.005)
+        plt.text(anchor_x * 2.1, anchor_y * 1.9, label, ha='center', va='center', fontsize=10)
 
     plt.axis('off')
     plt.axis('equal')
+    plt.show()
+
+
+def estimate_celltocell_transitions(adata, delta_X, embedding, cluster=None, annot=None, log_P=True, n_jobs=1):
+
+    n_neighbors=200
+
+    # Recompute transition probabilities for cluster subset
+    if cluster is not None:
+        adata = adata.copy()
+        cell_idxs = np.where(adata.obs[annot] == cluster)[0]
+
+        delta_X = delta_X[cell_idxs, :]
+        embedding = embedding[cell_idxs, :]
+        adata = adata[adata.obs[annot] == cluster]
+
+        P = estimate_transition_probabilities(
+            adata, delta_X, embedding, n_neighbors=n_neighbors, random_neighbors=True, n_jobs=n_jobs)
+
+    elif 'transition_P' not in adata.uns:
+        # this it taking way too long
+        # P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=None, n_jobs=n_jobs)
+        
+        # quicker alternative, although may need adjusting
+        P = estimate_transition_probabilities(
+            adata, delta_X, embedding, n_neighbors=200, random_neighbors=True, n_jobs=n_jobs)
+        adata.uns['transition_P'] = P
+    
+    else:
+        P = adata.uns['transition_P']
+    
+
+    delta_X_rndm = np.copy(delta_X)
+    permute_rows_nsign(delta_X_rndm)
+
+    P_null = estimate_transition_probabilities(
+        adata, delta_X_rndm, embedding, n_neighbors=n_neighbors, random_neighbors=True, n_jobs=n_jobs
+    )
+
+    x = embedding[:, 0]
+    y = embedding[:, 1]
+
+    if log_P:
+        P = np.where(P != 0, np.log(P), 0)
+        P_null = np.where(P_null != 0, np.log(P_null), 0)
+    
+    P = P - P_null
+    intensity = np.sum(P, axis=0).reshape(-1, 1)
+    intensity = MinMaxScaler().fit_transform(intensity)
+
+    plt.scatter(x, y, c=intensity, cmap='coolwarm', s=1, alpha=0.9, label='Transition Probabilities')
+
+    plt.colorbar(label='Transition Odds Post-perturbation')
+    if cluster is not None:
+        plt.title(f'{cluster} Subset Transition Probabilities')
+    plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+    plt.tight_layout()
+
+
+def contour_shift(adata_train, seed=1334, savepath=False):
+
+    # Load data
+    perturbed = adata_train.layers['simulated_count']
+    gex = adata_train.layers['imputed_count']
+
+    # Create UMAP embeddings
+    reducer = umap.UMAP(random_state=seed, n_neighbors=50, min_dist=1.0, spread=5.0)
+    X = np.vstack([gex, perturbed])
+    umap_coords = reducer.fit_transform(X)
+
+    # Split coordinates back into WT and KO
+    n_wt = gex.shape[0]
+    wt_umap = umap_coords[:n_wt]
+    ko_umap = umap_coords[n_wt:]
+
+    # Create elegant UMAP visualization
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Plot cell type scatter points with custom styling
+    sns.scatterplot(
+        x=wt_umap[:,0], 
+        y=wt_umap[:,1],
+        hue=adata_train.obs.rctd_celltypes.values,
+        alpha=0.5,
+        s=20,
+        style=adata_train.obs.rctd_celltypes.values,
+        ax=ax,
+        markers=['o', 'X', '<', '^', 'v', 'D', '>'],
+    )
+
+    # Add density contours for WT and KO
+    for coords, label, color in [(wt_umap, 'WT', 'grey'), 
+                                (ko_umap, 'KO', 'black')]:
+        sns.kdeplot(
+            x=coords[:,0],
+            y=coords[:,1], 
+            levels=8,
+            alpha=1,
+            linewidths=2,
+            label=label,
+            color=color,
+            ax=ax,
+            legend=True
+        )
+
+    # Style the plot
+    ax.set_title('Cell Identity Shift after Knockout', pad=20, fontsize=12)
+    ax.set_xlabel('UMAP 1', labelpad=10)
+    ax.set_ylabel('UMAP 2', labelpad=10)
+    ax.legend(ncol=1, loc='upper left', frameon=False)
+
+    # Remove frame
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    # Remove ticks
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    plt.tight_layout()
+    if savepath:
+        plt.savefig(savepath, dpi=200, transparent=True)
+    plt.show()
+
+
+
+
+
+# Cannibalized from CellOracle
+@jit(nopython=True)
+def permute_rows_nsign(A: np.ndarray) -> None:
+    """Permute in place the entries and randomly switch the sign for each row of a matrix independently.
+    """
+    plmi = np.array([+1, -1])
+    for i in range(A.shape[0]):
+        np.random.shuffle(A[i, :])
+        A[i, :] = A[i, :] * np.random.choice(plmi, size=A.shape[1])
