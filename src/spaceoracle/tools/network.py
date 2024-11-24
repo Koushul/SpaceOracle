@@ -249,3 +249,60 @@ class MouseKidneyRegulatoryNetwork(CellOracleLinks):
         self.regulator_dict = regulator_masks
 
         return all_regulators
+    
+
+
+class HumanTonsilNetwork(CellOracleLinks):
+    def __init__(self):
+
+        self.base_pth = os.path.join(
+                os.path.dirname(__file__), '..', '..', '..', 'data')
+
+        with open(self.base_pth+'/BaseGRNs/tonsil_celloracle.pkl', 'rb') as f:
+            self.links = pickle.load(f)
+
+        self.annot = 'cluster'
+
+        self.cluster_labels = {
+            0: 'Plasma Cells',
+            1: 'Cycling B Cells',
+            2: 'Follicular Dendritic Cells ',
+            3: 'Dark Zone B Cells',
+            4: 'IFN B Cells',
+            5: 'T Cells',
+            6: 'Light Zone B Cells',
+            7: 'Memory B Cells',
+            8: 'Naive B Cells',
+            9: 'GC-Tfh'
+        }
+
+
+    def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
+        adata_clusters = np.unique(adata.obs[self.annot])
+        regulator_dict = {}
+        all_regulators = set()
+
+        for label in adata_clusters:
+            cluster = self.cluster_labels[int(label)]
+            grn_df = self.links[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[label] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators

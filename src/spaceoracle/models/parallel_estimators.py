@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.linear_model import ARDRegression
 from group_lasso import GroupLasso
 from spaceoracle.models.spatial_map import xyc2spatial_fast
-from spaceoracle.tools.network import DayThreeRegulatoryNetwork, expand_paired_interactions
+from spaceoracle.tools.network import DayThreeRegulatoryNetwork, HumanTonsilNetwork, expand_paired_interactions
 from .pixel_attention import CellularNicheNetwork
 from ..tools.utils import gaussian_kernel_2d, min_max_df, set_seed
 import commot as ct
@@ -113,7 +113,8 @@ class RotatedTensorDataset(Dataset):
 class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
             cluster_annot='rctd_cluster', layer='imputed_count', 
-            radius=200, tf_ligand_cutoff=0.01):
+            radius=200, tf_ligand_cutoff=0.01, grn_type='day3', 
+            species='mouse'):
         
 
         assert isinstance(adata, AnnData), 'adata must be an AnnData object'
@@ -130,10 +131,15 @@ class SpatialCellularProgramsEstimator:
         self.radius = radius
         self.spatial_dim = spatial_dim
         self.tf_ligand_cutoff = tf_ligand_cutoff
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        
+        if grn_type == 'day3':
+            self.grn = DayThreeRegulatoryNetwork()
+        elif grn_type == 'human_tonsil':
+            self.grn = HumanTonsilNetwork()
+
         self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
 
-        self.init_ligands_and_receptors()
+        self.init_ligands_and_receptors(species=species)
         self.lr_pairs = self.lr['pairs']
         
         self.n_clusters = len(self.adata.obs[self.cluster_annot].unique())
@@ -148,10 +154,10 @@ class SpatialCellularProgramsEstimator:
         assert np.isin(self.regulators, self.adata.var_names).all(), 'all regulators must be in adata.var_names'
 
 
-    def init_ligands_and_receptors(self, receptor_thresh=0.01):
+    def init_ligands_and_receptors(self, species='mouse', receptor_thresh=0.01):
         df_ligrec = ct.pp.ligand_receptor_database(
                 database='CellChat', 
-                species='mouse', 
+                species=species, 
                 signaling_type="Secreted Signaling"
             )
             
@@ -171,7 +177,7 @@ class SpatialCellularProgramsEstimator:
         self.receptors = list(self.lr.receptor.values)
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
+        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', f'ligand_target_{species}.parquet'))
         nichenet_lt = pd.read_parquet(data_path)
 
         self.nichenet_lt = nichenet_lt.loc[
