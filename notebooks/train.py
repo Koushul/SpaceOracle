@@ -3,14 +3,14 @@ sys.path.append('../src')
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import scanpy as sc
-import spaceoracle
+from spaceoracle import SpaceTravLR
 
 
 adata_train = sc.read_h5ad(
     '/ix/djishnu/shared/djishnu_kor11/training_data/day3_lymph_rep_1.h5ad')
 
 
-so = spaceoracle.SpaceOracle(
+star = SpaceTravLR(
     adata=adata_train,
     annot='rctd_cluster', 
     max_epochs=200, 
@@ -22,6 +22,6 @@ so = spaceoracle.SpaceOracle(
     save_dir='/ix/djishnu/shared/djishnu_kor11/models_v2'
 )
 
-so.run()
+star.run()
 
 exit()

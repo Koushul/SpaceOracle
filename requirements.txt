@@ -28,4 +28,5 @@ pyro-ppl
 commot
 group-lasso
 pqdm
+magic-impute
 # velocyto==0.17.17
