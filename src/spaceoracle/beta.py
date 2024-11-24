@@ -36,6 +36,10 @@ class BetaFrame(pd.DataFrame):
         self.tfs = []
         self.lr_pairs = []
         self.tfl_pairs = []
+
+        # to be filled in later
+        self.modulator_gene_indices = None
+        self.wbetas = None
         
         for col in self.columns:
             if col.startswith(self.prefix):
@@ -46,6 +50,7 @@ class BetaFrame(pd.DataFrame):
                     self.tfl_pairs.append(modulator) 
                 else:
                     self.tfs.append(modulator)
+
 
         self.ligands, self.receptors = zip(
             *[p.split('$') for p in self.lr_pairs]) if self.lr_pairs else ([], [])
@@ -67,6 +72,9 @@ class BetaFrame(pd.DataFrame):
         self.df_tfl_columns = [f'beta_{r}' for r in self.tfl_regulators]+ \
             [f'beta_{l}' for l in self.tfl_ligands]
         self.tf_columns = [f'beta_{t}' for t in self.tfs]
+
+        self.lr_pairs = [pair.split('$') for pair in self.lr_pairs]
+        self.tfl_pairs = [pair.split('#') for pair in self.tfl_pairs]
     
 
     def splash(self, rw_ligands, gex_df):
@@ -122,3 +130,8 @@ class Betabase:
             gene_name = path.split('/')[-1].split('_')[0]
             self.data[gene_name] = BetaFrame.from_path(path)
             self.ligands_set.update(self.data[gene_name]._all_ligands)
+        
+        for gene_name, betadata in self.data.items():
+            betadata.modulator_gene_indices = [
+                self.gene2index[g.replace('beta_', '')] for g in betadata.modulators_genes
+            ]

@@ -30,7 +30,7 @@ from sklearn.neighbors import NearestNeighbors
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .tools.knn_smooth import knn_smoothing
-
+from .beta import Betabase
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.pixel_attention import NicheAttentionNetwork
 from .models.parallel_estimators import SpatialCellularProgramsEstimator, received_ligands
@@ -397,39 +397,7 @@ class SpaceTravLR(BaseTravLR):
     @staticmethod
     def load_betadata(gene, save_dir):
         return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
-
-    def _get_betas(self, target_gene):
-        betadata = self.load_betadata(target_gene, self.save_dir)
-        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
-        all_modulators = [i.replace('beta_', '') for i in beta_columns]
-        tfs = [i for i in all_modulators if '$' not in i and '#' not in i]
-        lr_pairs = [i for i in all_modulators if '$' in i]
-        tfl_pairs = [i for i in all_modulators if '#' in i]
-        
-        ligands = [i.split('$')[0] for i in lr_pairs]
-        receptors = [i.split('$')[1] for i in lr_pairs]
-
-        tfl_ligands = [i.split('#')[0] for i in tfl_pairs]
-        tfl_regulators = [i.split('#')[1] for i in tfl_pairs]
-
-        self.ligands.update(ligands)
-        self.ligands.update(tfl_ligands)
-        
-        modulators = np.unique(tfs + ligands + receptors + tfl_ligands + tfl_regulators)   # sorted names
-        modulator_gene_indices = [self.gene2index[m] for m in modulators] 
-        modulators = [f'beta_{m}' for m in modulators]
-
-        return BetaOutput(
-            betas=betadata[['beta0']+beta_columns].astype(np.float32),
-            modulator_genes=modulators,
-            modulator_gene_indices=modulator_gene_indices,
-            ligands=ligands,
-            receptors=receptors,
-            tfl_ligands=tfl_ligands,
-            tfl_regulators=tfl_regulators,
-            ligand_receptor_pairs=tuple(zip(ligands, receptors)),
-            tfl_pairs=tuple(zip(tfl_ligands, tfl_regulators))
-        )
+    
     
     def _get_wbetas_dict(self, betas_dict, gene_mtx):
         
@@ -446,68 +414,24 @@ class SpaceTravLR(BaseTravLR):
 
         self.weighted_ligands = weighted_ligands
 
-        for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions', disable=len(betas_dict) == 1):
-            betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
-            betas_dict[gene].wbetas = betas_df
+        for gene, betadata in tqdm(betas_dict.data.items(), total=len(betas_dict), desc='Interactions', disable=len(betas_dict) == 1):
+            betas_dict.data[gene].wbetas = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betadata)
+
+        # for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions', disable=len(betas_dict) == 1):
+        #     betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
+        #     betas_dict[gene].wbetas = betas_df
 
         return betas_dict
 
-    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betaoutput):
-
-        modulators = betaoutput.modulator_genes
-
-        betas_df = self.estimate_gene_wbetas(
-            rw_ligands=rw_ligands, 
-            betas_df=betaoutput.betas, 
-            gex_df=gex_df, 
-            ligands=betaoutput.ligands,
-            receptors=betaoutput.receptors,
-            tfl_ligands=betaoutput.tfl_ligands,
-            tfl_regulators=betaoutput.tfl_regulators,
-            ligand_receptor_pairs=betaoutput.ligand_receptor_pairs,
-            tfl_pairs=betaoutput.tfl_pairs
-        )
-
-        betas_df = betas_df[modulators]
+    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betadata):
+        betas_df = betadata.splash(rw_ligands, gex_df)
+        return betas_df
         
-        return gene, betas_df
-    
-    @staticmethod
-    def estimate_gene_wbetas(
-        rw_ligands, betas_df, gex_df, ligands, receptors, 
-        tfl_ligands, tfl_regulators, ligand_receptor_pairs, tfl_pairs):
-        
-        ## wL is the amount of ligand 'received' at each location
-        ## assuming ligands and receptors expression are independent, dL/dR = 0
-        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
-        ## dy/dTF1 = b1
-        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
-        ##         = b2*R1 + b3*R2
-        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
-        
-
-        _df_lr = pd.DataFrame(
-            betas_df[[f'beta_{a}${b}' for a, b in ligand_receptor_pairs]*2].values * \
-                rw_ligands[ligands].join(gex_df[receptors]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in receptors]+[f'beta_{l}' for l in ligands]
-        )
-
-        _df_tfl = pd.DataFrame(
-            betas_df[[f'beta_{a}#{b}' for a, b in tfl_pairs]*2].values * \
-                rw_ligands[tfl_ligands].join(gex_df[tfl_regulators]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in tfl_regulators]+[f'beta_{l}' for l in tfl_ligands]
-        )
-
-        return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
-
 
     def _get_spatial_betas_dict(self):
-        beta_dict = {}
-        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
-            beta_dict[gene] = self._get_betas(gene)
-        return beta_dict
+        bdb = Betabase(self.adata, self.save_dir)
+        self.ligands = bdb.ligands_set
+        return bdb
     
 
     def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
@@ -517,11 +441,11 @@ class SpaceTravLR(BaseTravLR):
         gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
 
         for i, gene in enumerate(genes):
-            _beta_out = betas_dict.get(gene, None)
+            _beta_out = betas_dict.data.get(gene, None)
             
             if _beta_out is not None:
                 r = np.array(_beta_out.modulator_gene_indices)
-                gene_gene_matrix[r, i] = _beta_out.wbetas[1].values[cell_index]
+                gene_gene_matrix[r, i] = _beta_out.wbetas.values[cell_index]
 
         return gex_delta[cell_index, :].dot(gene_gene_matrix)
 
