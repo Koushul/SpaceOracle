@@ -18,8 +18,8 @@ def get_modulator_betas(so_obj, goi, save_dir=None):
         so_obj.beta_dict = so_obj._get_spatial_betas_dict() 
         
     beta_dict = so_obj.beta_dict.data
-        
-    gene_mtx = so_obj.adata.layers[so_obj.layer]
+    
+    gene_mtx = so_obj.adata.layers['imputed_count']
     gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
 
     gex_df = pd.DataFrame(gene_mtx, index=so_obj.adata.obs_names, columns=so_obj.adata.var_names)

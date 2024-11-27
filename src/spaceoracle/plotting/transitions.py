@@ -11,8 +11,8 @@ from .layout import plot_quiver, plot_vectorfield
 from .shift import *
 
 
-def estimate_transitions_2D(adata, delta_X, embedding, annot=None, normalize=True, 
-n_neighbors=200, vector_scale=1, n_jobs=1):
+def estimate_transitions_2D(adata, delta_X, embedding, layout_embedding, annot=None, normalize=True, 
+n_neighbors=200, vector_scale=1, n_jobs=1, ax=None):
 
     P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=n_neighbors, n_jobs=n_jobs)
     V_simulated = project_probabilities(P, embedding, normalize=normalize)
@@ -64,12 +64,12 @@ n_neighbors=200, vector_scale=1, n_jobs=1):
         background = None
     else:
         background = {
-            'X': embedding[:, 0], 
-            'Y': embedding[:, 1], 
+            'X': layout_embedding[:, 0], 
+            'Y': layout_embedding[:, 1], 
             'annot': list(adata.obs[annot]),
         }
 
-    plot_quiver(grid_points, vector_field, background=background)
+    plot_quiver(grid_points, vector_field, background=background, ax=ax)
 
 
 def estimate_transitions_3D(adata, delta_X, embedding, annot=None, normalize=True, 
@@ -266,7 +266,7 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
 
 
 
-def contour_shift(adata_train, seed=1334, savepath=False):
+def contour_shift(adata_train, annot, seed=1334, savepath=False):
 
     # Load data
     perturbed = adata_train.layers['simulated_count']
@@ -289,10 +289,10 @@ def contour_shift(adata_train, seed=1334, savepath=False):
     sns.scatterplot(
         x=wt_umap[:,0], 
         y=wt_umap[:,1],
-        hue=adata_train.obs.rctd_celltypes.values,
+        hue=adata_train.obs[f'{annot}'].values,
         alpha=0.5,
         s=20,
-        style=adata_train.obs.rctd_celltypes.values,
+        style=adata_train.obs[f'{annot}'].values,
         ax=ax,
         markers=['o', 'X', '<', '^', 'v', 'D', '>'],
     )
@@ -313,7 +313,7 @@ def contour_shift(adata_train, seed=1334, savepath=False):
         )
 
     # Style the plot
-    ax.set_title('Cell Identity Shift after Knockout', pad=20, fontsize=12)
+    ax.set_title(f'Cell Identity Shift', pad=20, fontsize=12)
     ax.set_xlabel('UMAP 1', labelpad=10)
     ax.set_ylabel('UMAP 2', labelpad=10)
     ax.legend(ncol=1, loc='upper left', frameon=False)
