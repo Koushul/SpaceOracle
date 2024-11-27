@@ -4,6 +4,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from sklearn.preprocessing import MinMaxScaler
+import seaborn as sns 
+import umap
 
 from .layout import plot_quiver, plot_vectorfield
 from .shift import *
@@ -260,4 +262,72 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
     plt.axis('off')
     plt.axis('equal')
     plt.tight_layout()
+    plt.show()
+
+
+
+def contour_shift(adata_train, seed=1334, savepath=False):
+
+    # Load data
+    perturbed = adata_train.layers['simulated_count']
+    gex = adata_train.layers['imputed_count']
+
+    # Create UMAP embeddings
+    reducer = umap.UMAP(random_state=seed, n_neighbors=50, min_dist=1.0, spread=5.0)
+    X = np.vstack([gex, perturbed])
+    umap_coords = reducer.fit_transform(X)
+
+    # Split coordinates back into WT and KO
+    n_wt = gex.shape[0]
+    wt_umap = umap_coords[:n_wt]
+    ko_umap = umap_coords[n_wt:]
+
+    # Create elegant UMAP visualization
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Plot cell type scatter points with custom styling
+    sns.scatterplot(
+        x=wt_umap[:,0], 
+        y=wt_umap[:,1],
+        hue=adata_train.obs.rctd_celltypes.values,
+        alpha=0.5,
+        s=20,
+        style=adata_train.obs.rctd_celltypes.values,
+        ax=ax,
+        markers=['o', 'X', '<', '^', 'v', 'D', '>'],
+    )
+
+    # Add density contours for WT and KO
+    for coords, label, color in [(wt_umap, 'WT', 'grey'), 
+                                (ko_umap, 'KO', 'black')]:
+        sns.kdeplot(
+            x=coords[:,0],
+            y=coords[:,1], 
+            levels=8,
+            alpha=1,
+            linewidths=2,
+            label=label,
+            color=color,
+            ax=ax,
+            legend=True
+        )
+
+    # Style the plot
+    ax.set_title('Cell Identity Shift after Knockout', pad=20, fontsize=12)
+    ax.set_xlabel('UMAP 1', labelpad=10)
+    ax.set_ylabel('UMAP 2', labelpad=10)
+    ax.legend(ncol=1, loc='upper left', frameon=False)
+
+    # Remove frame
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    # Remove ticks
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    plt.tight_layout()
+    if savepath:
+        plt.savefig(savepath, dpi=200, transparent=True)
     plt.show()

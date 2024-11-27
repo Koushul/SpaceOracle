@@ -59,7 +59,7 @@ class CPU_Unpickler(pickle.Unpickler):
 
 class BaseTravLR(ABC):
     
-    def __init__(self, adata):
+    def __init__(self, adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes']):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         # self.adata.layers['normalized_count'] = self.adata.X.copy()
@@ -70,7 +70,7 @@ class BaseTravLR(ABC):
             self.pcs = self.perform_PCA(self.adata)
             self.knn_imputation(self.adata, self.pcs, method='MAGIC')
 
-        clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
+        clean_up_adata(self.adata, fields_to_keep=fields_to_keep)
 
     ## cannibalized from CellOracle
     @staticmethod
@@ -267,7 +267,7 @@ class SpaceTravLR(BaseTravLR):
     layer='imputed_count', alpha=0.05, test_mode=False, 
     threshold_lambda=3e3, tf_ligand_cutoff=0.01, radius=200):
         
-        super().__init__(adata)
+        super().__init__(adata, fields_to_keep=[annot])
         if grn is None:
             self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         else: 
@@ -355,7 +355,8 @@ class SpaceTravLR(BaseTravLR):
                 cluster_annot=self.annot,
                 spatial_dim=self.spatial_dim,
                 radius=200,
-                tf_ligand_cutoff=self.tf_ligand_cutoff
+                tf_ligand_cutoff=self.tf_ligand_cutoff,
+                grn=self.grn
             )
             
             estimator.test_mode = self.test_mode
