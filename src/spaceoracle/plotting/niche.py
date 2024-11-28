@@ -60,7 +60,9 @@ def show_beta_neighborhoods(so, goi, betas=None, annot=None, clusters=None, scor
     beta_dict = so.beta_dict
     if betas is None:
         betas = beta_dict.data[goi].iloc[:, :-4].values
-    cell_types = beta_dict.data[goi][annot]
+    betas = np.array(betas)
+    # cell_types = beta_dict.data[goi][annot]
+    cell_types = adata.obs[annot].values
     if clusters is None:
         clusters = np.unique(cell_types)
 
@@ -68,6 +70,7 @@ def show_beta_neighborhoods(so, goi, betas=None, annot=None, clusters=None, scor
     range_n_clusters = range(2, 5)  # Range of clusters to try
 
     for cell_type in clusters:
+
         subset_idxs = np.where(cell_types == cell_type)[0]
         subset = betas[subset_idxs]
 

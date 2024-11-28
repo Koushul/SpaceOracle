@@ -15,15 +15,15 @@ def estimate_transitions_2D(adata, delta_X, embedding, layout_embedding, annot=N
 n_neighbors=200, vector_scale=1, n_jobs=1, ax=None):
 
     P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=n_neighbors, n_jobs=n_jobs)
-    V_simulated = project_probabilities(P, embedding, normalize=normalize)
+    V_simulated = project_probabilities(P, layout_embedding, normalize=normalize)
 
-    grid_scale = 10 / np.mean(abs(np.diff(embedding)))
+    grid_scale = 10 / np.mean(abs(np.diff(layout_embedding)))
     print(grid_scale)
     get_grid_points = lambda min_val, max_val: np.linspace(min_val, max_val, 
                                                            int((max_val - min_val + 1) * grid_scale))
 
-    grid_x = get_grid_points(np.min(embedding[:, 0]), np.max(embedding[:, 0]))
-    grid_y = get_grid_points(np.min(embedding[:, 1]), np.max(embedding[:, 1]))
+    grid_x = get_grid_points(np.min(layout_embedding[:, 0]), np.max(layout_embedding[:, 0]))
+    grid_y = get_grid_points(np.min(layout_embedding[:, 1]), np.max(layout_embedding[:, 1]))
     grid_points = np.array(np.meshgrid(grid_x, grid_y)).T.reshape(-1, 2)
     size_x, size_y = len(grid_x), len(grid_y)
     
@@ -32,15 +32,15 @@ n_neighbors=200, vector_scale=1, n_jobs=1, ax=None):
     x_thresh = (grid_x[1] - grid_x[0]) / 2
     y_thresh = (grid_y[1] - grid_y[0]) / 2
 
-    get_neighborhood = lambda grid_point, embedding: np.where(
-        (np.abs(embedding[:, 0] - grid_point[0]) <= x_thresh) &  
-        (np.abs(embedding[:, 1] - grid_point[1]) <= y_thresh)   
+    get_neighborhood = lambda grid_point, layout_embedding: np.where(
+        (np.abs(layout_embedding[:, 0] - grid_point[0]) <= x_thresh) &  
+        (np.abs(layout_embedding[:, 1] - grid_point[1]) <= y_thresh)   
     )[0]
 
     for idx, grid_point in tqdm(enumerate(grid_points), desc='Computing vectors', total=len(grid_points)):
 
         # Get average vector within neighborhood
-        indices = get_neighborhood(grid_point, embedding)
+        indices = get_neighborhood(grid_point, layout_embedding)
         if len(indices) <= 0:
             continue
         nbr_vector = np.mean(V_simulated[indices], axis=0)

@@ -15,20 +15,21 @@ from numba import jit
 
 
 class Prophet(BaseTravLR):
-    def __init__(self, adata, save_dir, annot, annot_labels=None, radius=200):
+    def __init__(self, adata, models_dir, annot, annot_labels=None, radius=200):
         
         super().__init__(adata, fields_to_keep=[annot, annot_labels])
         
         self.adata = adata.copy()
         self.annot = annot
-        self.save_dir = save_dir
+        self.save_dir = models_dir
         self.annot_labels = annot_labels
         self.radius = radius
 
-        self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
+        self.queue = OracleQueue(models_dir, all_genes=self.adata.var_names)
         self.ligands = set()
         self.genes = list(self.adata.var_names)
         self.trained_genes = []
+        self.betas_cache = {}
         
         self.goi = None
 
@@ -159,7 +160,7 @@ class Prophet(BaseTravLR):
 
     def plot_betas_goi(self, save_dir=False):
         betas_goi_all = get_modulator_betas(self, self.goi, save_dir=save_dir)
-        self.betas[f'betas_{self.goi}'] = betas_goi_all
+        self.betas_cache[f'betas_{self.goi}'] = betas_goi_all
     
     def plot_beta_neighborhoods(self, goi=None, use_modulators=False, score_thresh=0.3, savepath=False, seed=1334):
         
@@ -170,10 +171,10 @@ class Prophet(BaseTravLR):
             # Remove coords and cluster labels
             betas = self.beta_dict.data[goi].iloc[:, :-4].values
         else:
-            betas = self.betas.get(f'betas_{goi}')
+            betas = self.betas_cache.get(f'betas_{goi}')
             if betas is None:
                 self.plot_betas_goi()
-                betas = self.betas[f'betas_{goi}']
+                betas = self.betas_cache[f'betas_{goi}']
         
         show_beta_neighborhoods(
             self, goi, betas, 
@@ -219,6 +220,7 @@ class Prophet(BaseTravLR):
             adata=self.adata,
             delta_X=self.adata.layers['delta_X'],
             embedding=nn_embedding,
+            layout_embedding=layout_embedding,
             annot=self.annot_labels,
             vector_scale=vector_scale,
             n_neighbors=n_neighbors, 
