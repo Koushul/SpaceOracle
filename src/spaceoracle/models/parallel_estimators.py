@@ -33,6 +33,7 @@ def calculate_weighted_ligands(gauss_weights, lig_df_values, u_ligands):
     return weighted_ligands
 
 def received_ligands(xy, lig_df, radius=200, scale_factor=1e5):
+    
     ligands = lig_df.columns
     gauss_weights = [
         scale_factor * gaussian_kernel_2d(
@@ -113,7 +114,7 @@ class RotatedTensorDataset(Dataset):
 class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
             cluster_annot='rctd_cluster', layer='imputed_count', 
-            radius=200, tf_ligand_cutoff=0.01):
+            radius=200, tf_ligand_cutoff=0.01, grn=None):
         
 
         assert isinstance(adata, AnnData), 'adata must be an AnnData object'
@@ -130,7 +131,12 @@ class SpatialCellularProgramsEstimator:
         self.radius = radius
         self.spatial_dim = spatial_dim
         self.tf_ligand_cutoff = tf_ligand_cutoff
-        self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        
+        if grn is None:
+            self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
+        else:
+            self.grn = grn
+
         self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
 
         self.init_ligands_and_receptors()
@@ -239,23 +245,18 @@ class SpatialCellularProgramsEstimator:
 
     def init_data(self):
 
+
         if len(self.lr['pairs']) > 0:
+
             self.adata.uns['received_ligands'] = received_ligands(
                 self.adata.obsm['spatial'], 
                 self.adata.to_df(layer=self.layer)[np.unique(self.ligands)], 
                 radius=self.radius,
             )
 
-            self.adata.uns['received_ligands_tfl'] = received_ligands(
-                self.adata.obsm['spatial'], 
-                self.adata.to_df(layer=self.layer)[np.unique(self.tfl_ligands)], 
-                radius=self.radius,
-            )
-
             self.adata.uns['ligand_receptor'] = self.ligands_receptors_interactions(
                 self.adata.uns['received_ligands'][self.ligands], 
                 self.adata.to_df(layer=self.layer)[self.receptors]
-
             )
 
         else:
@@ -264,6 +265,13 @@ class SpatialCellularProgramsEstimator:
 
 
         if len(self.tfl_pairs) > 0:
+            
+            self.adata.uns['received_ligands_tfl'] = received_ligands(
+                self.adata.obsm['spatial'], 
+                self.adata.to_df(layer=self.layer)[np.unique(self.tfl_ligands)], 
+                radius=self.radius,
+            )
+
             self.adata.uns['ligand_regulator'] = self.ligand_regulators_interactions(
                 self.adata.uns['received_ligands_tfl'][self.tfl_ligands], 
                 self.adata.to_df(layer=self.layer)[self.tfl_regulators]
