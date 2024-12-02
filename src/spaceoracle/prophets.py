@@ -255,7 +255,7 @@ class Prophet(BaseTravLR):
 
         estimate_transitions_2D(
             adata=self.adata,
-            delta_X=self.adata.layers['delta_X'],
+            delta_X=delta_X_rndm,
             embedding=nn_embedding,
             layout_embedding=layout_embedding,
             annot=annot,
