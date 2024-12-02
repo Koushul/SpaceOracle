@@ -93,7 +93,7 @@ def compare_gex(adata, annot, goi, embedding='FR', n_neighbors=15, n_pcs=20, see
         sc.pl.paga(adata)
 
         sc.tl.draw_graph(adata, init_pos='paga', random_state=seed)
-        sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis")
+        sc.pl.draw_graph(adata, color=[goi, annot], layer="imputed_count", use_raw=False, cmap="viridis", legend_loc='on data')
 
 
 

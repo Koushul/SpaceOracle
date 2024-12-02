@@ -12,12 +12,12 @@ from .shift import *
 
 
 def estimate_transitions_2D(adata, delta_X, embedding, layout_embedding, annot=None, normalize=True, 
-n_neighbors=200, vector_scale=1, n_jobs=1, ax=None):
+n_neighbors=200, grid_scale=1, vector_scale=1, n_jobs=1, ax=None):
 
     P = estimate_transition_probabilities(adata, delta_X, embedding, n_neighbors=n_neighbors, n_jobs=n_jobs)
     V_simulated = project_probabilities(P, layout_embedding, normalize=normalize)
 
-    grid_scale = 10 / np.mean(abs(np.diff(layout_embedding)))
+    grid_scale = 10 * grid_scale / np.mean(abs(np.diff(layout_embedding)))
     print(grid_scale)
     get_grid_points = lambda min_val, max_val: np.linspace(min_val, max_val, 
                                                            int((max_val - min_val + 1) * grid_scale))

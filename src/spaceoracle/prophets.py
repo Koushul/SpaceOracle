@@ -169,6 +169,7 @@ class Prophet(BaseTravLR):
 
         if use_modulators:
             # Remove coords and cluster labels
+            assert goi in self.beta_dict.data.keys(), f'{goi} does not have modulators'
             betas = self.beta_dict.data[goi].iloc[:, :-4].values
         else:
             betas = self.betas_cache.get(f'betas_{goi}')
@@ -176,7 +177,7 @@ class Prophet(BaseTravLR):
                 self.plot_betas_goi()
                 betas = self.betas_cache[f'betas_{goi}']
         
-        show_beta_neighborhoods(
+        labels = show_beta_neighborhoods(
             self, goi, betas, 
             annot=self.annot_labels, 
             score_thresh=score_thresh,
@@ -184,14 +185,46 @@ class Prophet(BaseTravLR):
             savepath=savepath
         )
 
-    def show_cluster_gex(self, goi=None, embedding='spatial'):
+        self.adata.obs['beta_neighborhood'] = labels
+        self.adata.obs['beta_neighborhood'] = self.adata.obs['beta_neighborhood'].astype('category')
+
+    def plot_beta_umap(self, use_modulators=False, seed=1334, n_neighbors=50):
+
+        assert 'beta_neighborhood' in self.adata.obs.columns, f'Run plot_beta_neighborhood() first'
+
+        reducer = umap.UMAP(random_state=seed, n_neighbors=n_neighbors, min_dist=1.0, spread=5.0)
+        
+        if use_modulators is True:
+            X = self.beta_dict.data[goi].iloc[:, :-4].values
+        else:
+            X = self.betas_cache[f'betas_{self.goi}']
+        
+        umap_coords = reducer.fit_transform(X)
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        sns.scatterplot(
+            x=umap_coords[:,0], 
+            y=umap_coords[:,1],
+            hue=self.adata.obs['beta_neighborhood'].values,
+            alpha=0.5,
+            s=20,
+            ax=ax,
+        )
+        plt.title(f'Beta UMAP for {self.goi}')
+
+        self.adata.obsm['beta_umap'] = umap_coords
+
+    def show_cluster_gex(self, goi=None, embedding='spatial', annot=None):
         if goi is None:
             goi = self.goi
         
-        compare_gex(self.adata, annot=self.annot_labels, goi=goi, embedding=embedding)
+        if annot is None:
+            annot = self.annot_labels
+        
+        compare_gex(self.adata, annot=annot, goi=goi, embedding=embedding)
 
     def show_transitions(self, layout_embedding=None, nn_embedding=None, vector_scale=1,
-    n_neighbors=200, n_jobs=1, savepath=False):
+    grid_scale=1, annot=None, n_neighbors=200, n_jobs=1, savepath=False):
             
         fig, axs = plt.subplots(1, 2, figsize=(12, 6))
         axs = axs.flatten()
@@ -202,12 +235,16 @@ class Prophet(BaseTravLR):
         if nn_embedding is None:
             nn_embedding = self.adata.obsm['X_draw_graph_fr']
         
+        if annot is None:
+            annot = self.annot_labels
+        
         estimate_transitions_2D(
             adata=self.adata,
             delta_X=self.adata.layers['delta_X'],
             embedding=nn_embedding,
             layout_embedding=layout_embedding,
-            annot=self.annot_labels,
+            annot=annot,
+            grid_scale=grid_scale,
             vector_scale=vector_scale,
             n_neighbors=n_neighbors, 
             n_jobs=n_jobs, ax=axs[0]
@@ -221,7 +258,8 @@ class Prophet(BaseTravLR):
             delta_X=self.adata.layers['delta_X'],
             embedding=nn_embedding,
             layout_embedding=layout_embedding,
-            annot=self.annot_labels,
+            annot=annot,
+            grid_scale=grid_scale,
             vector_scale=vector_scale,
             n_neighbors=n_neighbors, 
             n_jobs=n_jobs, ax=axs[1]
