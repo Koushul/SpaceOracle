@@ -139,7 +139,13 @@ class SpatialCellularProgramsEstimator:
 
         self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
 
-        self.init_ligands_and_receptors()
+        sample_gene = adata.var_names[0]
+        if sample_gene.isupper(): 
+            species = 'human'
+        else:
+            species = 'mouse'
+        self.init_ligands_and_receptors(species=species)
+        
         self.lr_pairs = self.lr['pairs']
         
         self.n_clusters = len(self.adata.obs[self.cluster_annot].unique())
@@ -154,10 +160,10 @@ class SpatialCellularProgramsEstimator:
         assert np.isin(self.regulators, self.adata.var_names).all(), 'all regulators must be in adata.var_names'
 
 
-    def init_ligands_and_receptors(self, receptor_thresh=0.01):
+    def init_ligands_and_receptors(self, receptor_thresh=0.01, species='mouse'):
         df_ligrec = ct.pp.ligand_receptor_database(
                 database='CellChat', 
-                species='mouse', 
+                species=species, 
                 signaling_type="Secreted Signaling"
             )
             
@@ -177,7 +183,13 @@ class SpatialCellularProgramsEstimator:
         self.receptors = list(self.lr.receptor.values)
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
+        if species == 'mouse':
+            data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target_mouse.parquet'))
+        elif species == 'human':
+            data_path = os.path.abspath(os.path.join(current_dir, '..', '..', '..', 'data', 'ligand_target.parquet'))
+        else:
+            raise f'no ligand_target.parquet exists for species {species}' 
+
         nichenet_lt = pd.read_parquet(data_path)
 
         self.nichenet_lt = nichenet_lt.loc[

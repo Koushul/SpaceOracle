@@ -29,15 +29,40 @@ from spaceoracle import SpaceTravLR
 ### SPLEEN SLIDE-SEQ ###
 ########################
 
-from spaceoracle.tools.network import MouseSpleenRegulatoryNetwork
-co_grn = MouseSpleenRegulatoryNetwork()
+# from spaceoracle.tools.network import MouseSpleenRegulatoryNetwork
+# co_grn = MouseSpleenRegulatoryNetwork()
+
+# adata_train = sc.read_h5ad(
+#     '/ix/djishnu/shared/djishnu_kor11/training_data/slideseq_spleen.h5ad')
+
+# star = SpaceTravLR(
+#     adata=adata_train,
+#     annot='clusters', 
+#     grn=co_grn,
+#     max_epochs=200, 
+#     learning_rate=5e-4, 
+#     spatial_dim=64,
+#     batch_size=512,
+#     threshold_lambda=1e-12,
+#     test_mode=False,
+#     save_dir='/ix/djishnu/shared/djishnu_kor11/models_spleen'
+# )
+
+#######################
+### HUMAN MELANOMA  ###
+#######################
+
+from spaceoracle.tools.network import HumanMelanomaRegulatoryNetwork
+from spaceoracle import SpaceTravLR
+
+co_grn = HumanMelanomaRegulatoryNetwork()
 
 adata_train = sc.read_h5ad(
-    '/ix/djishnu/shared/djishnu_kor11/training_data/slideseq_spleen.h5ad')
+    '/ix/djishnu/shared/djishnu_kor11/training_data/HumanMelanomaRNA.h5ad')
 
 star = SpaceTravLR(
     adata=adata_train,
-    annot='clusters', 
+    annot='cluster_cat', 
     grn=co_grn,
     max_epochs=200, 
     learning_rate=5e-4, 
@@ -45,9 +70,8 @@ star = SpaceTravLR(
     batch_size=512,
     threshold_lambda=1e-12,
     test_mode=False,
-    save_dir='/ix/djishnu/shared/djishnu_kor11/models_spleen'
+    save_dir='/ix/djishnu/shared/djishnu_kor11/models_melanoma'
 )
-
 
 star.run()
 exit()

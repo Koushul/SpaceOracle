@@ -195,7 +195,7 @@ class Prophet(BaseTravLR):
         reducer = umap.UMAP(random_state=seed, n_neighbors=n_neighbors, min_dist=1.0, spread=5.0)
         
         if use_modulators is True:
-            X = self.beta_dict.data[goi].iloc[:, :-4].values
+            X = self.beta_dict.data[self.goi].iloc[:, :-4].values
         else:
             X = self.betas_cache[f'betas_{self.goi}']
         

@@ -35,6 +35,11 @@ def get_modulator_betas(so_obj, goi, save_dir=None):
         betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
         if f'beta_{goi}' in betas_df.columns:
             bois.append(betas_df[f'beta_{goi}'].rename(f'{gene}_beta_{goi}'))
+    
+    if len(bois) == 0:
+        print(f'{goi} is not a modulator of any gene')
+        return None
+    
     df = pd.concat(bois, axis=1)
 
     beta_mean = df.mean(axis = 1) # average across all genes with beta_Il2ra
@@ -74,8 +79,8 @@ def show_beta_neighborhoods(so, goi, betas=None, annot=None, clusters=None, scor
         subset_idxs = np.where(cell_types == cell_type)[0]
         subset = betas[subset_idxs]
 
-        best_score = -1
-        best_n_clusters = 2
+        best_score = score_thresh
+        best_n_clusters = 1
 
         for n_clusters in range_n_clusters:
             kmeans = KMeans(n_clusters=n_clusters, random_state=seed)
@@ -85,9 +90,6 @@ def show_beta_neighborhoods(so, goi, betas=None, annot=None, clusters=None, scor
                 if score > best_score:
                     best_score = score
                     best_n_clusters = n_clusters
-        
-        if best_score < score_thresh:  
-            best_n_clusters = 1
 
         print(cell_type, best_score)
 
