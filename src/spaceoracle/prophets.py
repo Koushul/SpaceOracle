@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import json
 
 from .models.parallel_estimators import received_ligands
 from .oracles import OracleQueue, BaseTravLR
@@ -10,6 +11,7 @@ from .beta import Betabase
 from .plotting.layout import *
 from .plotting.transitions import * 
 from .plotting.niche import *
+from .plotting.beta_maps import plot_spatial
 
 from numba import jit
 
@@ -32,6 +34,8 @@ class Prophet(BaseTravLR):
         self.betas_cache = {}
         
         self.goi = None
+        self.gsea_scores = {}
+        self.sim_adata = None
 
     def compute_betas(self):
         self.beta_dict = self._get_spatial_betas_dict()
@@ -153,10 +157,9 @@ class Prophet(BaseTravLR):
 
         # return gem_simulated
     
-
     def plot_contour_shift(self, seed=1334, savepath=False):
         assert self.adata.layers.get('delta_X') is not None
-        contour_shift(self.adata, annot=self.annot_labels, seed=seed, savepath=savepath)
+        contour_shift(self.adata, gene=self.goi, annot=self.annot_labels, seed=seed, savepath=savepath)
 
     def plot_betas_goi(self, save_dir=False):
         betas_goi_all = get_modulator_betas(self, self.goi, save_dir=save_dir)
@@ -187,6 +190,37 @@ class Prophet(BaseTravLR):
 
         self.adata.obs['beta_neighborhood'] = labels
         self.adata.obs['beta_neighborhood'] = self.adata.obs['beta_neighborhood'].astype('category')
+
+    def plot_beta_map(self, regulator, target_gene, clusters=None, save_dir=False):
+
+        if clusters is None:
+            clusters = self.adata.obs[self.annot].value_counts().head(3).index
+
+        beta_data = self.beta_dict.data[target_gene]
+        beta_data[self.annot_labels] = self.adata.obs[self.annot_labels]
+        ax = plot_spatial(
+            df=beta_data,
+            plot_for=f'beta_{regulator}',
+            target_gene=target_gene,
+            clusters=clusters,
+            annot=self.annot,
+            annot_labels=self.annot_labels,
+            with_expr=False
+        )
+        plt.tight_layout()
+
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            savepath = os.path.join(save_dir, f'{target_gene}_beta_{regulator}_map.png')
+            plt.savefig(savepath)
+        
+
+
+
+
+
+
+
 
     def plot_beta_umap(self, use_modulators=False, seed=1334, n_neighbors=50):
 
@@ -274,6 +308,59 @@ class Prophet(BaseTravLR):
             plt.savefig(savepath)
 
         plt.show()
+    
+    
+    def create_sim_adata(self):
+
+        assert 'simulated_count' in self.adata.layers.keys(), 'Run perturb first'
+        
+        self.sim_adata = sc.AnnData(
+                X=self.adata.layers['simulated_count'],
+                obs=self.adata.obs,
+                var=self.adata.var
+            )
+        return self.sim_adata
+
+    def compute_gsea_scores(self, use_simulated=False, savepath=False):
+
+        if use_simulated:
+            adata = self.create_sim_adata()
+            label= f'simulated_{self.goi}'
+        else:
+            adata = self.adata
+            label= 'observed'
+
+        with open('../../data/GSEA_human/h.all.v2024.1.Hs.json', 'r') as f:
+            gsea = json.load(f)
+        # with open('../../data/GSEA_human/c7.immunesigdb.v2024.1.Hs.json', 'r') as f:
+        #     gsea_immune = json.load(f)
+    
+        gsea_scores = {}
+
+        for mod_name, mod_dict in gsea.items():
+            gene_list = mod_dict['geneSymbols']
+            gene_list = [g for g in gene_list if g in adata.var_names]
+            score_name = f'{mod_name}'
+
+            sc.tl.score_genes(adata, gene_list, score_name=score_name, use_raw=False)
+
+            gsea_scores[mod_name] = adata.obs[score_name].var()
+        
+        gsea_scores = pd.DataFrame(gsea_scores.values(), index=gsea_scores.keys(), columns=['score_var'])
+        self.gsea_scores[label] = gsea_scores.sort_values('score_var', ascending=False)
+
+        sc.pl.spatial(
+            adata,
+            color=gsea_scores.head(5).index,
+            ncols=5,
+            spot_size=50,
+            show=not savepath,
+        )
+
+        if savepath:
+            plt.savefig(savepath)
+
+
 
 
 

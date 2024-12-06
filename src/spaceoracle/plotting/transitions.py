@@ -266,7 +266,7 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
 
 
 
-def contour_shift(adata_train, annot, seed=1334, savepath=False):
+def contour_shift(adata_train, gene, annot, seed=1334, savepath=False):
 
     # Load data
     perturbed = adata_train.layers['simulated_count']
@@ -313,7 +313,7 @@ def contour_shift(adata_train, annot, seed=1334, savepath=False):
         )
 
     # Style the plot
-    ax.set_title(f'Cell Identity Shift', pad=20, fontsize=12)
+    ax.set_title(f'Cell Identity Shift from {gene} KO', pad=20, fontsize=12)
     ax.set_xlabel('UMAP 1', labelpad=10)
     ax.set_ylabel('UMAP 2', labelpad=10)
     ax.legend(ncol=1, loc='upper left', frameon=False)
