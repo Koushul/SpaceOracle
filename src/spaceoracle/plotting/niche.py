@@ -2,8 +2,6 @@ import os
 import numpy as np 
 import pandas as pd 
 import matplotlib.pyplot as plt
-
-from sklearn.preprocessing import MinMaxScaler
 from spaceoracle.models.parallel_estimators import received_ligands
 
 import math
@@ -13,14 +11,16 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
 
-def get_modulator_betas(so_obj, goi, save_dir=None):
+def get_modulator_betas(so_obj, goi, save_dir=None, use_simulated=False):
     if so_obj.beta_dict is None:
         so_obj.beta_dict = so_obj._get_spatial_betas_dict() 
         
     beta_dict = so_obj.beta_dict.data
     
-    gene_mtx = so_obj.adata.layers['imputed_count']
-    gene_mtx = MinMaxScaler().fit_transform(gene_mtx)
+    if use_simulated:
+        gene_mtx = so_obj.adata.layers['simulated_count']
+    else:
+        gene_mtx = so_obj.adata.layers['imputed_count']
 
     gex_df = pd.DataFrame(gene_mtx, index=so_obj.adata.obs_names, columns=so_obj.adata.var_names)
 
@@ -32,7 +32,7 @@ def get_modulator_betas(so_obj, goi, save_dir=None):
 
     bois = []
     for gene, betaoutput in tqdm(beta_dict.items(), total=len(beta_dict), desc='Ligand interactions'):
-        betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
+        betas_df= so_obj._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)        
         if f'beta_{goi}' in betas_df.columns:
             bois.append(betas_df[f'beta_{goi}'].rename(f'{gene}_beta_{goi}'))
     
@@ -42,7 +42,7 @@ def get_modulator_betas(so_obj, goi, save_dir=None):
     
     df = pd.concat(bois, axis=1)
 
-    beta_mean = df.mean(axis = 1) # average across all genes with beta_Il2ra
+    beta_mean = df.mean(axis = 1) # average across all genes with beta_goi
     plt.scatter(
         so_obj.adata.obsm['spatial'][:, 0], 
         so_obj.adata.obsm['spatial'][:, 1], 

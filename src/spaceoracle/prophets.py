@@ -18,6 +18,9 @@ from numba import jit
 
 class Prophet(BaseTravLR):
     def __init__(self, adata, models_dir, annot, annot_labels=None, radius=200):
+
+        if annot_labels == None:
+            annot_labels = annot
         
         super().__init__(adata, fields_to_keep=[annot, annot_labels])
         
@@ -36,6 +39,11 @@ class Prophet(BaseTravLR):
         self.goi = None
         self.gsea_scores = {}
         self.sim_adata = None
+
+        with open('../../data/GSEA_human/h.all.v2024.1.Hs.json', 'r') as f:
+            self.gsea_modules = json.load(f)
+        # with open('../../data/GSEA_human/c7.immunesigdb.v2024.1.Hs.json', 'r') as f:
+        #     gsea_immune = json.load(f)
 
     def compute_betas(self):
         self.beta_dict = self._get_spatial_betas_dict()
@@ -101,6 +109,7 @@ class Prophet(BaseTravLR):
         for key in ['transition_probabilities', 'grid_points', 'vector_field']:
             self.adata.uns.pop(key, None)
 
+
         assert target in self.adata.var_names
         
         if gene_mtx is None: 
@@ -161,9 +170,12 @@ class Prophet(BaseTravLR):
         assert self.adata.layers.get('delta_X') is not None
         contour_shift(self.adata, gene=self.goi, annot=self.annot_labels, seed=seed, savepath=savepath)
 
-    def plot_betas_goi(self, save_dir=False):
-        betas_goi_all = get_modulator_betas(self, self.goi, save_dir=save_dir)
-        self.betas_cache[f'betas_{self.goi}'] = betas_goi_all
+    def plot_betas_goi(self, goi=None, save_dir=False, use_simulated=False):
+        '''use_simulated: if True, compute rw_ligands from simulated_count, else from imputed_count'''
+        if goi is None:
+            goi = self.goi
+        betas_goi_all = get_modulator_betas(self, goi, save_dir=save_dir, use_simulated=use_simulated)
+        self.betas_cache[f'betas_{goi}'] = betas_goi_all
     
     def plot_beta_neighborhoods(self, goi=None, use_modulators=False, score_thresh=0.3, savepath=False, seed=1334):
         
@@ -213,13 +225,6 @@ class Prophet(BaseTravLR):
             os.makedirs(save_dir, exist_ok=True)
             savepath = os.path.join(save_dir, f'{target_gene}_beta_{regulator}_map.png')
             plt.savefig(savepath)
-        
-
-
-
-
-
-
 
 
     def plot_beta_umap(self, use_modulators=False, seed=1334, n_neighbors=50):
@@ -317,49 +322,61 @@ class Prophet(BaseTravLR):
         self.sim_adata = sc.AnnData(
                 X=self.adata.layers['simulated_count'],
                 obs=self.adata.obs,
-                var=self.adata.var
+                var=self.adata.var,
+                obsm=self.adata.obsm
             )
         return self.sim_adata
 
-    def compute_gsea_scores(self, use_simulated=False, savepath=False):
+    def compute_gsea_scores(self, use_simulated=False, show_spatial=True, savepath=False):
 
         if use_simulated:
             adata = self.create_sim_adata()
             label= f'simulated_{self.goi}'
         else:
-            adata = self.adata
+            adata = self.adata.copy()
+            adata.X = adata.layers['imputed_count']
             label= 'observed'
 
-        with open('../../data/GSEA_human/h.all.v2024.1.Hs.json', 'r') as f:
-            gsea = json.load(f)
-        # with open('../../data/GSEA_human/c7.immunesigdb.v2024.1.Hs.json', 'r') as f:
-        #     gsea_immune = json.load(f)
-    
-        gsea_scores = {}
+        gsea_scores = self.gsea_scores.get(label, None)
 
-        for mod_name, mod_dict in gsea.items():
-            gene_list = mod_dict['geneSymbols']
-            gene_list = [g for g in gene_list if g in adata.var_names]
-            score_name = f'{mod_name}'
-
-            sc.tl.score_genes(adata, gene_list, score_name=score_name, use_raw=False)
-
-            gsea_scores[mod_name] = adata.obs[score_name].var()
+        if gsea_scores is None:
         
-        gsea_scores = pd.DataFrame(gsea_scores.values(), index=gsea_scores.keys(), columns=['score_var'])
-        self.gsea_scores[label] = gsea_scores.sort_values('score_var', ascending=False)
+            gsea_scores = {}
 
-        sc.pl.spatial(
-            adata,
-            color=gsea_scores.head(5).index,
-            ncols=5,
-            spot_size=50,
-            show=not savepath,
-        )
+            for mod_name, mod_dict in self.gsea_modules.items():
+                gene_list = mod_dict['geneSymbols']
+                gene_list = [g for g in gene_list if g in adata.var_names]
+                score_name = f'{mod_name}'
+
+                sc.tl.score_genes(adata, gene_list, score_name=score_name, use_raw=False)
+
+                gsea_scores[mod_name] = adata.obs[score_name].var()
+            
+            gsea_scores = pd.DataFrame(gsea_scores.values(), index=gsea_scores.keys(), columns=['score_var'])
+            self.gsea_scores[label] = gsea_scores.sort_values('score_var', ascending=False)
+
+        if 'observed' in self.gsea_scores.keys():
+            modules = list(self.gsea_scores['observed'].head(4).index)
+        else:
+            modules = list(gsea_scores.head(4).index)
+
+        plot_params = {
+            "color": [self.annot_labels] + modules,
+            "ncols": 5,
+            "show": not savepath,
+        }
+
+        if show_spatial:
+            plot_params["spot_size"] = 50
+            sc.pl.spatial(adata, **plot_params)
+        else:
+            sc.pp.neighbors(adata)
+            sc.tl.umap(adata)
+            sc.pl.umap(adata, **plot_params)
 
         if savepath:
             plt.savefig(savepath)
-
+    
 
 
 
