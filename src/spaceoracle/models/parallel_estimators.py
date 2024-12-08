@@ -18,6 +18,9 @@ from ..tools.utils import gaussian_kernel_2d, min_max_df, set_seed
 import commot as ct
 from scipy.spatial.distance import cdist
 import numba
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
 set_seed(42)
 
 @numba.njit(parallel=True)
@@ -113,7 +116,7 @@ class RotatedTensorDataset(Dataset):
 class SpatialCellularProgramsEstimator:
     def __init__(self, adata, target_gene, spatial_dim=64, 
             cluster_annot='rctd_cluster', layer='imputed_count', 
-            radius=200, tf_ligand_cutoff=0.01, grn_type='day3', 
+            radius=200, tf_ligand_cutoff=0.01, grn=None, 
             species='mouse'):
         
 
@@ -132,10 +135,10 @@ class SpatialCellularProgramsEstimator:
         self.spatial_dim = spatial_dim
         self.tf_ligand_cutoff = tf_ligand_cutoff
         
-        if grn_type == 'day3':
+        if grn == None:
             self.grn = DayThreeRegulatoryNetwork()
-        elif grn_type == 'human_tonsil':
-            self.grn = HumanTonsilNetwork()
+        else:
+            self.grn = grn
 
         self.regulators = self.grn.get_cluster_regulators(self.adata, self.target_gene)
 
@@ -154,7 +157,29 @@ class SpatialCellularProgramsEstimator:
         assert np.isin(self.regulators, self.adata.var_names).all(), 'all regulators must be in adata.var_names'
 
 
-    def init_ligands_and_receptors(self, species='mouse', receptor_thresh=0.01):
+    def plot_modulators(self):
+
+        word_freq = {reg: 1 for reg in set(
+            self.regulators + 
+            self.ligands + 
+            self.tfl_ligands + 
+            self.receptors + 
+            self.tfl_regulators
+        )}
+
+        # Generate word cloud with equal sizing
+        wordcloud = WordCloud(
+            width=800, height=400, 
+            background_color='white').generate_from_frequencies(word_freq)
+
+        # Display the word cloud
+        plt.figure(figsize=(16, 8))
+        plt.imshow(wordcloud, interpolation='bilinear', aspect='equal')
+        plt.axis('off')
+        plt.title(self.target_gene)
+        plt.show()
+
+    def init_ligands_and_receptors(self, receptor_thresh=0.01, species='mouse'):
         df_ligrec = ct.pp.ligand_receptor_database(
                 database='CellChat', 
                 species=species, 

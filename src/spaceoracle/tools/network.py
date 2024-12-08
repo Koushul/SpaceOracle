@@ -306,3 +306,61 @@ class HumanTonsilNetwork(CellOracleLinks):
         self.regulator_dict = regulator_masks
 
         return all_regulators
+    
+
+class HumanTonsilRegulatoryNetwork(CellOracleLinks):
+    def __init__(self):
+
+        self.base_pth = os.path.join(
+            os.path.dirname(__file__), '..', '..', '..', 'data')
+
+        with open(self.base_pth+'/slidetags/tonsil_colinks.pkl', 'rb') as f:
+            self.links = pickle.load(f)
+
+        self.annot = 'cell_type_int'
+        
+        self.cluster_labels = {0: 'B_germinal_center',
+            1: 'B_memory', 
+            2: 'B_naive',
+            3: 'FDC',
+            4: 'NK',
+            5: 'T_CD4',
+            6: 'T_CD8',
+            7: 'T_double_neg',
+            8: 'T_follicular_helper',
+            9: 'mDC',
+            10: 'myeloid',
+            11: 'pDC',
+            12: 'plasma'
+        }
+
+    def get_cluster_regulators(self, adata, target_gene, alpha=0.05):
+        adata_clusters = np.unique(adata.obs[self.annot])
+        regulator_dict = {}
+        all_regulators = set()
+
+        for label in adata_clusters:
+            cluster = self.cluster_labels[label]
+            # cluster = str(label)
+            grn_df = self.links[cluster]
+
+            grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]
+            tfs = list(grn_df.source)
+            
+            regulator_dict[label] = tfs
+            all_regulators.update(tfs)
+
+        all_regulators = all_regulators & set(adata.to_df().columns) # only use genes also in adata
+        all_regulators = sorted(list(all_regulators))
+        regulator_masks = {}
+
+        for label, tfs in regulator_dict.items():
+            indices = [all_regulators.index(tf)+1 for tf in tfs if tf in all_regulators]
+            
+            mask = torch.zeros(len(all_regulators) + 1)     # prepend 1 for beta0
+            mask[[0] + indices] = 1 
+            regulator_masks[label] = mask
+
+        self.regulator_dict = regulator_masks
+
+        return all_regulators
