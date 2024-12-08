@@ -30,7 +30,7 @@ from sklearn.neighbors import NearestNeighbors
 
 from .tools.network import DayThreeRegulatoryNetwork
 from .tools.knn_smooth import knn_smoothing
-
+from .beta import Betabase
 from .models.spatial_map import xyc2spatial, xyc2spatial_fast
 from .models.pixel_attention import NicheAttentionNetwork
 from .models.parallel_estimators import SpatialCellularProgramsEstimator, received_ligands
@@ -59,7 +59,7 @@ class CPU_Unpickler(pickle.Unpickler):
 
 class BaseTravLR(ABC):
     
-    def __init__(self, adata):
+    def __init__(self, adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes']):
         assert 'normalized_count' in adata.layers
         self.adata = adata.copy()
         # self.adata.layers['normalized_count'] = self.adata.X.copy()
@@ -70,7 +70,7 @@ class BaseTravLR(ABC):
             self.pcs = self.perform_PCA(self.adata)
             self.knn_imputation(self.adata, self.pcs, method='MAGIC')
 
-        clean_up_adata(self.adata, fields_to_keep=['rctd_cluster', 'rctd_celltypes'])
+        clean_up_adata(self.adata, fields_to_keep=fields_to_keep)
 
     ## cannibalized from CellOracle
     @staticmethod
@@ -267,7 +267,7 @@ class SpaceTravLR(BaseTravLR):
     layer='imputed_count', alpha=0.05, test_mode=False, 
     threshold_lambda=3e3, tf_ligand_cutoff=0.01, radius=200):
         
-        super().__init__(adata)
+        super().__init__(adata, fields_to_keep=[annot])
         if grn is None:
             self.grn = DayThreeRegulatoryNetwork() # CellOracle GRN
         else: 
@@ -355,7 +355,8 @@ class SpaceTravLR(BaseTravLR):
                 cluster_annot=self.annot,
                 spatial_dim=self.spatial_dim,
                 radius=200,
-                tf_ligand_cutoff=self.tf_ligand_cutoff
+                tf_ligand_cutoff=self.tf_ligand_cutoff,
+                grn=self.grn
             )
             
             estimator.test_mode = self.test_mode
@@ -393,201 +394,6 @@ class SpaceTravLR(BaseTravLR):
             train_bar.count = 0
             train_bar.start = time.time()
 
-
-    @staticmethod
-    def load_betadata(gene, save_dir):
-        return pd.read_parquet(f'{save_dir}/{gene}_betadata.parquet')
-
-    def _get_betas(self, target_gene):
-        betadata = self.load_betadata(target_gene, self.save_dir)
-        beta_columns = [i for i in betadata.columns if i[:5] == 'beta_']
-        all_modulators = [i.replace('beta_', '') for i in beta_columns]
-        tfs = [i for i in all_modulators if '$' not in i and '#' not in i]
-        lr_pairs = [i for i in all_modulators if '$' in i]
-        tfl_pairs = [i for i in all_modulators if '#' in i]
-        
-        ligands = [i.split('$')[0] for i in lr_pairs]
-        receptors = [i.split('$')[1] for i in lr_pairs]
-
-        tfl_ligands = [i.split('#')[0] for i in tfl_pairs]
-        tfl_regulators = [i.split('#')[1] for i in tfl_pairs]
-
-        self.ligands.update(ligands)
-        self.ligands.update(tfl_ligands)
-        
-        modulators = np.unique(tfs + ligands + receptors + tfl_ligands + tfl_regulators)   # sorted names
-        modulator_gene_indices = [self.gene2index[m] for m in modulators] 
-        modulators = [f'beta_{m}' for m in modulators]
-
-        return BetaOutput(
-            betas=betadata[['beta0']+beta_columns].astype(np.float32),
-            modulator_genes=modulators,
-            modulator_gene_indices=modulator_gene_indices,
-            ligands=ligands,
-            receptors=receptors,
-            tfl_ligands=tfl_ligands,
-            tfl_regulators=tfl_regulators,
-            ligand_receptor_pairs=tuple(zip(ligands, receptors)),
-            tfl_pairs=tuple(zip(tfl_ligands, tfl_regulators))
-        )
-    
-    def _get_wbetas_dict(self, betas_dict, gene_mtx):
-        
-        gex_df = pd.DataFrame(gene_mtx, index=self.adata.obs_names, columns=self.adata.var_names)
-
-        if len(self.ligands) > 0:
-            weighted_ligands = received_ligands(
-                xy=self.adata.obsm['spatial'], 
-                lig_df=gex_df[list(self.ligands)],
-                radius=self.radius
-            )
-        else:
-            weighted_ligands = []
-
-        self.weighted_ligands = weighted_ligands
-
-        for gene, betaoutput in tqdm(betas_dict.items(), total=len(betas_dict), desc='Ligand interactions', disable=len(betas_dict) == 1):
-            betas_df = self._combine_gene_wbetas(gene, weighted_ligands, gex_df, betaoutput)
-            betas_dict[gene].wbetas = betas_df
-
-        return betas_dict
-
-    def _combine_gene_wbetas(self, gene, rw_ligands, gex_df, betaoutput):
-
-        modulators = betaoutput.modulator_genes
-
-        betas_df = self.estimate_gene_wbetas(
-            rw_ligands=rw_ligands, 
-            betas_df=betaoutput.betas, 
-            gex_df=gex_df, 
-            ligands=betaoutput.ligands,
-            receptors=betaoutput.receptors,
-            tfl_ligands=betaoutput.tfl_ligands,
-            tfl_regulators=betaoutput.tfl_regulators,
-            ligand_receptor_pairs=betaoutput.ligand_receptor_pairs,
-            tfl_pairs=betaoutput.tfl_pairs
-        )
-
-        betas_df = betas_df[modulators]
-        
-        return gene, betas_df
-    
-    @staticmethod
-    def estimate_gene_wbetas(
-        rw_ligands, betas_df, gex_df, ligands, receptors, 
-        tfl_ligands, tfl_regulators, ligand_receptor_pairs, tfl_pairs):
-        
-        ## wL is the amount of ligand 'received' at each location
-        ## assuming ligands and receptors expression are independent, dL/dR = 0
-        ## y = b0 + b1*TF1 + b2*wL1R1 + b3*wL1R2
-        ## dy/dTF1 = b1
-        ## dy/dwL1 = b2[wL1*dR1/dwL1 + R1] + b3[wL1*dR2/dwL1 + R2]
-        ##         = b2*R1 + b3*R2
-        ## dy/dR1 = b2*[wL1 + R1*dwL1/dR1] = b2*wL1
-        
-
-        _df_lr = pd.DataFrame(
-            betas_df[[f'beta_{a}${b}' for a, b in ligand_receptor_pairs]*2].values * \
-                rw_ligands[ligands].join(gex_df[receptors]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in receptors]+[f'beta_{l}' for l in ligands]
-        )
-
-        _df_tfl = pd.DataFrame(
-            betas_df[[f'beta_{a}#{b}' for a, b in tfl_pairs]*2].values * \
-                rw_ligands[tfl_ligands].join(gex_df[tfl_regulators]).values,
-            index=betas_df.index,
-            columns=[f'beta_{r}' for r in tfl_regulators]+[f'beta_{l}' for l in tfl_ligands]
-        )
-
-        return pd.concat([betas_df, _df_lr, _df_tfl], axis=1).groupby(lambda x: x, axis=1).sum()
-
-
-    def _get_spatial_betas_dict(self):
-        beta_dict = {}
-        for gene in tqdm(self.queue.completed_genes, desc='Estimating betas globally'):
-            beta_dict[gene] = self._get_betas(gene)
-        return beta_dict
-    
-
-    def _perturb_single_cell(self, gex_delta, cell_index, betas_dict):
-
-        genes = self.adata.var_names
-        
-        gene_gene_matrix = np.zeros((len(genes), len(genes))) # columns are target genes, rows are regulators
-
-        for i, gene in enumerate(genes):
-            _beta_out = betas_dict.get(gene, None)
-            
-            if _beta_out is not None:
-                r = np.array(_beta_out.modulator_gene_indices)
-                gene_gene_matrix[r, i] = _beta_out.wbetas[1].values[cell_index]
-
-        return gex_delta[cell_index, :].dot(gene_gene_matrix)
-
-
-    def perturb(self, target, gene_mtx=None, n_propagation=3, gene_expr=0, cells=None):
-        
-        for key in ['transition_probabilities', 'grid_points', 'vector_field']:
-            self.adata.uns.pop(key, None)
-
-        assert target in self.adata.var_names
-        
-        if gene_mtx is None: 
-            gene_mtx = self.adata.layers['imputed_count']
-
-        if isinstance(gene_mtx, pd.DataFrame):
-            gene_mtx = gene_mtx.values
-
-
-        target_index = self.gene2index[target]  
-        simulation_input = gene_mtx.copy()
-
-        # perturb target gene
-        if cells is None:
-            simulation_input[:, target_index] = gene_expr   
-        else:
-            simulation_input[cells, target_index] = gene_expr
-        
-        delta_input = simulation_input - gene_mtx       # get delta X
-        delta_simulated = delta_input.copy() 
-
-        if self.beta_dict is None:
-            print('Computing beta_dict')
-            self.beta_dict = self._get_spatial_betas_dict() # compute betas for all genes for all cells
-
-        for n in range(n_propagation):
-
-            beta_dict = self._get_wbetas_dict(self.beta_dict, gene_mtx + delta_simulated)
-
-            _simulated = np.array(
-                [self._perturb_single_cell(delta_simulated, i, beta_dict) 
-                    for i in tqdm(
-                        range(self.adata.n_obs), 
-                        desc=f'Running simulation {n+1}/{n_propagation}')])
-            delta_simulated = np.array(_simulated)
-            delta_simulated = np.where(delta_input != 0, delta_input, delta_simulated)
-
-            gem_tmp = gene_mtx + delta_simulated
-            gem_tmp[gem_tmp<0] = 0
-            delta_simulated = gem_tmp - gene_mtx
-
-        gem_simulated = gene_mtx + delta_simulated
-        
-        assert gem_simulated.shape == gene_mtx.shape
-
-        # just as in CellOracle, don't allow simulated to exceed observed values
-        imputed_count = gene_mtx
-        min_ = imputed_count.min(axis=0)
-        max_ = imputed_count.max(axis=0)
-        gem_simulated = pd.DataFrame(gem_simulated).clip(lower=min_, upper=max_, axis=1).values
-
-        self.adata.layers['simulated_count'] = gem_simulated
-        self.adata.layers['delta_X'] = gem_simulated - imputed_count
-
-        return gem_simulated
-
-
     @staticmethod
     def imbue_adata_with_space(adata, annot='rctd_cluster', spatial_dim=64, in_place=False, method='fast'):
         clusters = np.array(adata.obs[annot])
@@ -621,12 +427,8 @@ class SpaceTravLR(BaseTravLR):
 
         return sp_maps
 
-
-    def compute_betas(self):
-        self.beta_dict = self._get_spatial_betas_dict()
-        self.coef_matrix = self._get_co_betas()
-
-
+    # This is incorrect, needs to be cluster specific
+    # Load links from CO trained model
     def _get_co_betas(self, alpha=1):
 
         gem = self.adata.to_df(layer='imputed_count')

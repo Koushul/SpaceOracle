@@ -2,11 +2,10 @@ import os
 os.environ["OMP_NESTED"] = "FALSE"
 import scanpy as sc
 import pandas as pd 
-import mudata as mu 
+# import mudata as mu 
 import numpy as np
 import copy
 
-from spaceoracle import SpaceOracle
 
 
 immune_modules = [18, 19, 33, 48, 58, 70, 74, 76]
@@ -106,12 +105,12 @@ def process_adata(
 
 
 def get_imputed(adata_train, spatial_dim, annot):
-
+    from spaceoracle import SpaceTravLR
     adata_train.layers["normalized_count"] = adata_train.to_df().values
 
-    SpaceOracle.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, annot=annot, in_place=True)
-    pcs = SpaceOracle.perform_PCA(adata_train)
-    SpaceOracle.knn_imputation(adata_train, pcs)
+    SpaceTravLR.imbue_adata_with_space(adata_train, spatial_dim=spatial_dim, annot=annot, in_place=True)
+    pcs = SpaceTravLR.perform_PCA(adata_train)
+    SpaceTravLR.knn_imputation(adata_train, pcs)
 
     return adata_train
 

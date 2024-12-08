@@ -1,12 +1,12 @@
-# SpaceOracle
+# SPaceTravLR
 
 [![Python Package using Conda](https://github.com/Koushul/SpaceOracle/actions/workflows/python-package-conda.yml/badge.svg?branch=main)](https://github.com/Koushul/SpaceOracle/actions/workflows/python-package-conda.yml)
 
 
 
-## Example Output
+## Poster
 
-![Beta Coefficients Example](./notebooks/beta_example.png)
+![Poster](./notebooks/beta_example.png)
 
 
 
