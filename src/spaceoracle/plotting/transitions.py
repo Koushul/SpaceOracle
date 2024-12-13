@@ -266,7 +266,7 @@ def estimate_celltype_transitions(adata, delta_X, embedding, annot='rctd_cluster
 
 
 
-def contour_shift(adata_train, annot, seed=1334, savepath=False):
+def contour_shift(adata_train, annot, seed=1334, size=20, thresh=0.01, alpha=0.5,savepath=False, show_labels=False, levels=8):
 
     # Load data
     perturbed = adata_train.layers['simulated_count']
@@ -282,19 +282,17 @@ def contour_shift(adata_train, annot, seed=1334, savepath=False):
     wt_umap = umap_coords[:n_wt]
     ko_umap = umap_coords[n_wt:]
 
-    # Create elegant UMAP visualization
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Plot cell type scatter points with custom styling
-    sns.scatterplot(
+    scatter = sns.scatterplot(
         x=wt_umap[:,0], 
         y=wt_umap[:,1],
         hue=adata_train.obs[f'{annot}'].values,
-        alpha=0.5,
-        s=20,
+        alpha=1,
+        s=size,
         style=adata_train.obs[f'{annot}'].values,
         ax=ax,
-        markers=['o', 'X', '<', '^', 'v', 'D', '>'],
+        # markers=['o', 'X', '<', '^', 'v', 'D', '>'],
     )
 
     # Add density contours for WT and KO
@@ -303,20 +301,48 @@ def contour_shift(adata_train, annot, seed=1334, savepath=False):
         sns.kdeplot(
             x=coords[:,0],
             y=coords[:,1], 
-            levels=8,
-            alpha=1,
+            levels=levels,
+            alpha=alpha,
             linewidths=2,
             label=label,
             color=color,
+            # cmap='magma',
+            thresh=thresh,
             ax=ax,
-            legend=True
+            # legend=True
         )
+
+    # Add cluster labels if requested
+    if show_labels:
+        # Calculate cluster centers
+        unique_clusters = adata_train.obs[annot].unique()
+        for cluster in unique_clusters:
+            mask = adata_train.obs[annot] == cluster
+            center_x = np.mean(wt_umap[mask, 0])
+            center_y = np.mean(wt_umap[mask, 1])
+            
+            # Get color from the scatter plot
+            cluster_color = scatter.legend_.get_texts()[list(unique_clusters).index(cluster)].get_color()
+            
+            # Add text with white background for better visibility
+            text = ax.text(center_x, center_y, cluster,
+                         ha='center', va='center',
+                         color=cluster_color,
+                         fontweight='bold',
+                         bbox=dict(facecolor='white', 
+                                 edgecolor='none',
+                                 alpha=0.7,
+                                 pad=0.5))
 
     # Style the plot
     ax.set_title(f'Cell Identity Shift', pad=20, fontsize=12)
     ax.set_xlabel('UMAP 1', labelpad=10)
     ax.set_ylabel('UMAP 2', labelpad=10)
-    ax.legend(ncol=1, loc='upper left', frameon=False)
+
+    if show_labels:
+        ax.get_legend().remove()
+    else:
+        ax.legend(ncol=1, loc='upper left', frameon=False)
 
     # Remove frame
     ax.spines['top'].set_visible(False)
@@ -330,4 +356,5 @@ def contour_shift(adata_train, annot, seed=1334, savepath=False):
     plt.tight_layout()
     if savepath:
         plt.savefig(savepath, dpi=200, transparent=True)
+    
     plt.show()

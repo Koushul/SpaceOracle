@@ -264,7 +264,7 @@ class SpaceTravLR(BaseTravLR):
 
     def __init__(self, adata, save_dir='./models', annot='rctd_cluster', grn=None,
     max_epochs=15, spatial_dim=64, learning_rate=3e-4, batch_size=256, rotate_maps=True, 
-    layer='imputed_count', alpha=0.05, test_mode=False, 
+    layer='imputed_count', alpha=0.05, test_mode=False, species='mouse', 
     threshold_lambda=3e3, tf_ligand_cutoff=0.01, radius=200):
         
         super().__init__(adata, fields_to_keep=[annot])
@@ -277,6 +277,7 @@ class SpaceTravLR(BaseTravLR):
         self.queue = OracleQueue(save_dir, all_genes=self.adata.var_names)
 
         self.annot = annot
+        self.species = species
         self.max_epochs = max_epochs
         self.spatial_dim = spatial_dim
         self.learning_rate = learning_rate
@@ -356,7 +357,8 @@ class SpaceTravLR(BaseTravLR):
                 spatial_dim=self.spatial_dim,
                 radius=200,
                 tf_ligand_cutoff=self.tf_ligand_cutoff,
-                grn=self.grn
+                grn=self.grn,
+                species=self.species
             )
             
             estimator.test_mode = self.test_mode

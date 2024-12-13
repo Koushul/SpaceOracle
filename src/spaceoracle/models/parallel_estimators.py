@@ -20,7 +20,9 @@ from scipy.spatial.distance import cdist
 import numba
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+import pickle
 
+tt = torch.tensor
 set_seed(42)
 
 @numba.njit(parallel=True)
@@ -546,4 +548,49 @@ class SpatialCellularProgramsEstimator:
 
             if num_epochs:
                 print(f'{cluster}: {r2_score(all_y_true, all_y_pred):.4f} | {r2_ard:.4f}')
+            self.models[cluster] = model
+
+
+    def export(self, save_dir='./models'):
+        """Export the estimator to disk, handling PyTorch models properly"""
+        # Create a copy of self that we can modify
+        export_obj = copy.copy(self)
+        
+        # Extract state dicts and anchors from models
+        model_states = {}
+        for cluster, model in self.models.items():
+            model_states[cluster] = {
+                'state_dict': model.state_dict(),
+                'anchors': model.anchors
+            }
+        
+        # Replace model objects with None before pickling
+        export_obj.models = model_states
+        
+        # Save the modified object
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, f'{self.target_gene}_estimator.pkl'), 'wb') as f:
+            pickle.dump(export_obj, f)
+            
+            
+    def load(self, path):
+        """Load an exported estimator from disk"""
+        with open(path, 'rb') as f:
+            loaded = pickle.load(f)
+            
+        # Copy all attributes except models
+        for attr, val in loaded.__dict__.items():
+            if attr != 'models':
+                setattr(self, attr, val)
+                
+        # Reconstruct models from state dicts
+        self.models = {}
+        for cluster, state in loaded.models.items():
+            model = CellularNicheNetwork(
+                n_modulators=len(self.modulators),
+                anchors=state['anchors'],
+                spatial_dim=self.spatial_dim, 
+                n_clusters=self.n_clusters
+            ).to(self.device)
+            model.load_state_dict(state)
             self.models[cluster] = model

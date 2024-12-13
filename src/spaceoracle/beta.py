@@ -104,14 +104,14 @@ class Betabase:
     """
     def __init__(self, adata, folder):
         assert os.path.exists(folder), f'Folder {folder} does not exist'
-        self.adata = adata
+        # self.adata = adata
         self.xydf = pd.DataFrame(
             adata.obsm['spatial'], index=adata.obs_names)
         self.folder = folder
         self.gene2index = dict(
             zip(
-                self.adata.var_names, 
-                range(len(self.adata.var_names))
+                adata.var_names, 
+                range(len(adata.var_names))
             )
         )
         self.beta_paths = glob.glob(f'{self.folder}/*_betadata.parquet')
