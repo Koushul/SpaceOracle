@@ -52,13 +52,38 @@ from spaceoracle import SpaceTravLR
 ### HUMAN MELANOMA  ###
 #######################
 
-from spaceoracle.tools.network import HumanMelanomaRegulatoryNetwork
+# from spaceoracle.tools.network import HumanMelanomaRegulatoryNetwork
+# from spaceoracle import SpaceTravLR
+
+# co_grn = HumanMelanomaRegulatoryNetwork()
+
+# adata_train = sc.read_h5ad(
+#     '/ix/djishnu/shared/djishnu_kor11/training_data/HumanMelanomaRNA.h5ad')
+
+# star = SpaceTravLR(
+#     adata=adata_train,
+#     annot='cluster_cat', 
+#     grn=co_grn,
+#     max_epochs=200, 
+#     learning_rate=5e-4, 
+#     spatial_dim=64,
+#     batch_size=512,
+#     threshold_lambda=1e-12,
+#     test_mode=False,
+#     save_dir='/ix/djishnu/shared/djishnu_kor11/models_melanoma'
+# )
+
+############################
+### MOUSE SURVEY KIDNEY  ###
+############################
+
+from spaceoracle.tools.network import MouseKidneyRegulatoryNetwork
 from spaceoracle import SpaceTravLR
 
-co_grn = HumanMelanomaRegulatoryNetwork()
+co_grn = MouseKidneyRegulatoryNetwork()
 
 adata_train = sc.read_h5ad(
-    '/ix/djishnu/shared/djishnu_kor11/training_data/HumanMelanomaRNA.h5ad')
+    '/ix/djishnu/shared/djishnu_kor11/training_data/survey_kidney.h5ad')
 
 star = SpaceTravLR(
     adata=adata_train,
@@ -66,12 +91,13 @@ star = SpaceTravLR(
     grn=co_grn,
     max_epochs=200, 
     learning_rate=5e-4, 
-    spatial_dim=64,
+    spatial_dim=35,
     batch_size=512,
     threshold_lambda=1e-12,
     test_mode=False,
-    save_dir='/ix/djishnu/shared/djishnu_kor11/models_melanoma'
+    save_dir='/ix/djishnu/shared/djishnu_kor11/models_kidney'
 )
+
 
 star.run()
 exit()

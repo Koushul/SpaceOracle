@@ -213,7 +213,7 @@ class MouseKidneyRegulatoryNetwork(CellOracleLinks):
         with open(self.base_pth+'/kidney/celloracle_links.pkl', 'rb') as f:
             self.links = pickle.load(f)
 
-        self.annot = 'cluster'
+        self.annot = 'cluster_cat'
 
         with open(os.path.join(self.base_pth, 'kidney/celltype_assign.json'), 'r') as f:
             self.cluster_labels = json.load(f)
@@ -225,8 +225,7 @@ class MouseKidneyRegulatoryNetwork(CellOracleLinks):
         all_regulators = set()
 
         for label in adata_clusters:
-            # cluster = self.cluster_labels[str(label)]
-            cluster = label
+            cluster = self.cluster_labels[str(label)]
             grn_df = self.links[cluster]
 
             grn_df = grn_df[(grn_df.target == target_gene) & (grn_df.p <= alpha)]

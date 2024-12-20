@@ -11,7 +11,7 @@ from .beta import Betabase
 from .plotting.layout import *
 from .plotting.transitions import * 
 from .plotting.niche import *
-from .plotting.beta_maps import plot_spatial
+from .plotting.beta_maps import *
 
 from numba import jit
 
@@ -170,11 +170,11 @@ class Prophet(BaseTravLR):
         assert self.adata.layers.get('delta_X') is not None
         contour_shift(self.adata, gene=self.goi, annot=self.annot_labels, seed=seed, savepath=savepath)
 
-    def plot_betas_goi(self, goi=None, save_dir=False, use_simulated=False):
+    def plot_betas_goi(self, goi=None, save_dir=False, use_simulated=False, clusters=[], blur=False):
         '''use_simulated: if True, compute rw_ligands from simulated_count, else from imputed_count'''
         if goi is None:
             goi = self.goi
-        betas_goi_all = get_modulator_betas(self, goi, save_dir=save_dir, use_simulated=use_simulated)
+        betas_goi_all = get_modulator_betas(self, goi, save_dir=save_dir, use_simulated=use_simulated, clusters=clusters, blur=blur)
         self.betas_cache[f'betas_{goi}'] = betas_goi_all
     
     def plot_beta_neighborhoods(self, goi=None, use_modulators=False, score_thresh=0.3, savepath=False, seed=1334):
@@ -210,6 +210,7 @@ class Prophet(BaseTravLR):
 
         beta_data = self.beta_dict.data[target_gene]
         beta_data[self.annot_labels] = self.adata.obs[self.annot_labels]
+
         ax = plot_spatial(
             df=beta_data,
             plot_for=f'beta_{regulator}',
@@ -350,9 +351,10 @@ class Prophet(BaseTravLR):
 
                 sc.tl.score_genes(adata, gene_list, score_name=score_name, use_raw=False)
 
-                gsea_scores[mod_name] = adata.obs[score_name].var()
+                gsea_scores[mod_name] = adata.obs[score_name]
             
-            gsea_scores = pd.DataFrame(gsea_scores.values(), index=gsea_scores.keys(), columns=['score_var'])
+            gsea_scores = pd.DataFrame(gsea_scores, columns=self.gsea_modules.keys()).T
+            gsea_scores['score_var'] = gsea_scores.var(axis=1)
             self.gsea_scores[label] = gsea_scores.sort_values('score_var', ascending=False)
 
         if 'observed' in self.gsea_scores.keys():
